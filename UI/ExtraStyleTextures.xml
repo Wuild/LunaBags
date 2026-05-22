@@ -1,0 +1,73 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\FrameXML\UI.xsd">
+
+    <Texture name="LunaBagsPaperDollFrameBgTemplate" file="Interface\FrameGeneral\UI-Background-Rock" horizTile="true" vertTile="true" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" x="16" y="-33"/>
+            <Anchor point="BOTTOMRIGHT" x="-36" y="78"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsPaperDollFrameTitleBgTemplate" inherits="_UI-Frame-TitleTileBg" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" x="16" y="-17"/>
+            <Anchor point="TOPRIGHT" x="-35" y="-17"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsPaperDollPortraitFrameTemplate" inherits="UI-Frame-Portrait" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" x="1" y="-3"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsTopRightCornerTemplate" inherits="UI-Frame-TopCornerRight" virtual="true">
+        <Anchors>
+            <Anchor point="TOPRIGHT" x="-32" y="-13"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsTopLeftCornerTemplate" inherits="UI-Frame-TopLeftCorner" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" x="10" y="-13"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsTopBorderTemplate" inherits="_UI-Frame-TitleTile" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" relativeTo="$parentPortraitFrame" relativePoint="TOPRIGHT" x="0" y="-10"/>
+            <Anchor point="TOPRIGHT" relativeTo="$parentTopRightCorner" relativePoint="TOPLEFT"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsTopTileStreaksTemplate" inherits="_UI-Frame-TopTileStreaks" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" x="16" y="-35"/>
+            <Anchor point="TOPRIGHT" x="-34" y="-35"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsBotLeftCornerTemplate" inherits="UI-Frame-BotCornerLeft" virtual="true">
+        <Anchors>
+            <Anchor point="BOTTOMLEFT" x="9" y="70"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsBotRightCornerTemplate" inherits="UI-Frame-BotCornerRight" virtual="true">
+        <Anchors>
+            <Anchor point="BOTTOMRIGHT" x="-32" y="70"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsBottomBorderTemplate" inherits="_UI-Frame-Bot" virtual="true">
+        <Anchors>
+            <Anchor point="BOTTOMLEFT" relativeTo="$parentBotLeftCorner" relativePoint="BOTTOMRIGHT"/>
+            <Anchor point="BOTTOMRIGHT" relativeTo="$parentBotRightCorner" relativePoint="BOTTOMLEFT"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsLeftBorderTemplate" inherits="!UI-Frame-LeftTile" virtual="true">
+        <Anchors>
+            <Anchor point="TOPLEFT" relativeTo="$parentPortraitFrame" relativePoint="BOTTOMLEFT" x="8" y="0"/>
+            <Anchor point="BOTTOMLEFT" relativeTo="$parentBotLeftCorner" relativePoint="TOPLEFT"/>
+        </Anchors>
+    </Texture>
+    <Texture name="LunaBagsRightBorderTemplate" inherits="!UI-Frame-RightTile" virtual="true">
+        <Anchors>
+            <Anchor point="TOPRIGHT" relativeTo="$parentTopRightCorner" relativePoint="BOTTOMRIGHT" x="1"/>
+            <Anchor point="BOTTOMRIGHT" relativeTo="$parentBotRightCorner" relativePoint="TOPRIGHT"/>
+        </Anchors>
+    </Texture>
+
+</Ui>

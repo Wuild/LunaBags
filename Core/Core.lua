@@ -1,0 +1,499 @@
+local ADDON_NAME, ns = ...
+
+---@class LunaBagsAddon : AceAddon-3.0, AceConsole-3.0, AceEvent-3.0
+local LunaBags = LibStub("AceAddon-3.0"):NewAddon(ADDON_NAME, "AceConsole-3.0", "AceEvent-3.0")
+ns.LunaBags = LunaBags
+
+local defaults = {
+    profile = {
+        enabled = true,
+        debug = false,
+        oneBag = {
+            columns = 11,
+            itemSize = 37,
+            spacing = 4,
+            splitByBagRows = false,
+            splitBags = {},
+            showBagRail = true,
+            scale = 1,
+            locked = false,
+            point = "BOTTOMRIGHT",
+            x = -34,
+            y = 126,
+        },
+        oneBank = {
+            columns = 11,
+            itemSize = 36,
+            spacing = 4,
+            scale = 1,
+            locked = false,
+            point = "BOTTOMLEFT",
+            x = 34,
+            y = 126,
+        },
+        plugins = {
+            qualityBorder = true,
+            trashIcon = true,
+        },
+        sorting = {
+            priorityItemIDs = "6948",
+            reverseSlotOrder = false,
+        },
+    },
+}
+
+function LunaBags:OnInitialize()
+    self.db = LibStub("AceDB-3.0"):New("LunaBagsDB", defaults, true)
+    self.db.profile.plugins = self.db.profile.plugins or {}
+    -- Migration: older builds wrote qualityBorder=false while plugin logic was incomplete.
+    -- Enable it once unless the user has already been migrated.
+    if not self.db.profile.plugins._qualityBorderMigrated then
+        self.db.profile.plugins.qualityBorder = true
+        self.db.profile.plugins._qualityBorderMigrated = true
+    end
+    self:RegisterChatCommand("lunabags", "HandleSlashCommand")
+    self:RegisterChatCommand("lb", "HandleSlashCommand")
+end
+
+function LunaBags:OnEnable()
+    if not self.db.profile.enabled then
+        return
+    end
+
+    self:RegisterEvent("BAG_UPDATE_DELAYED")
+    self:RegisterEvent("PLAYER_MONEY")
+    self:RegisterEvent("CHAT_MSG_MONEY", "PLAYER_MONEY")
+    self:RegisterEvent("CHAT_MSG_LOOT", "PLAYER_MONEY")
+    self:RegisterEvent("TRADE_MONEY_CHANGED", "PLAYER_MONEY")
+    self:RegisterEvent("PLAYER_TRADE_MONEY", "PLAYER_MONEY")
+    self:RegisterEvent("SEND_MAIL_MONEY_CHANGED", "PLAYER_MONEY")
+    self:RegisterEvent("ADDON_LOADED")
+    self:RegisterEvent("PLAYER_ENTERING_WORLD")
+    self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", "BAG_UPDATE_DELAYED")
+    self:RegisterEvent("BANKFRAME_OPENED")
+    self:RegisterEvent("BANKFRAME_CLOSED")
+    self:RegisterEvent("PLAYER_LOGOUT")
+
+    if not self._bankCallHijacked then
+        self._bankCallHijacked = true
+        if hooksecurefunc then
+            if type(_G.BankFrame_Show) == "function" then
+                hooksecurefunc("BankFrame_Show", function()
+                    if BankFrame then
+                        BankFrame:SetAlpha(0)
+                        BankFrame:EnableMouse(false)
+                    end
+                    if ns.OneBank then
+                        ns.OneBank:Show()
+                    end
+                end)
+            end
+            if type(_G.CloseBankFrame) == "function" then
+                hooksecurefunc("CloseBankFrame", function()
+                    if ns.OneBank then
+                        ns.OneBank:Hide()
+                    end
+                    if BankFrame then
+                        BankFrame:SetAlpha(1)
+                        BankFrame:EnableMouse(true)
+                    end
+                end)
+            end
+        end
+    end
+
+    self:UpdateCurrentCharacterCache(false)
+    if ns.BagHooks then
+        ns.BagHooks:EnableHooks()
+    end
+
+    self:Print("Loaded. Type /lunabags for options.")
+end
+
+function LunaBags:SuppressDefaultBankFrame()
+    if not BankFrame then
+        return
+    end
+    BankFrame:SetAlpha(0)
+    BankFrame:EnableMouse(false)
+end
+
+function LunaBags:RestoreDefaultBankFrame()
+    if not BankFrame then
+        return
+    end
+    BankFrame:SetAlpha(1)
+    BankFrame:EnableMouse(true)
+end
+
+function LunaBags:DisableDefaultBankFrame()
+    if self._bankFrameDisabled or not BankFrame then
+        return
+    end
+    self._bankFrameDisabled = true
+
+    BankFrame:SetScript("OnShow", nil)
+    BankFrame:SetScript("OnHide", nil)
+    if BankFrame.UnregisterAllEvents then
+        BankFrame:UnregisterAllEvents()
+    end
+    if hooksecurefunc then
+        hooksecurefunc(BankFrame, "Show", function()
+            BankFrame:Hide()
+        end)
+    end
+    BankFrame:Hide()
+    BankFrame:SetAlpha(0)
+    BankFrame:EnableMouse(false)
+end
+
+function LunaBags:EnsureBankFrameSuppressionHooks()
+    if self._bankFrameSuppressionHooked or not BankFrame then
+        return
+    end
+    self._bankFrameSuppressionHooked = true
+    self:DisableDefaultBankFrame()
+
+    BankFrame:HookScript("OnShow", function()
+        BankFrame:Hide()
+    end)
+
+    if hooksecurefunc then
+        hooksecurefunc(BankFrame, "Show", function()
+            BankFrame:Hide()
+        end)
+    end
+end
+
+function LunaBags:UpdateCurrentCharacterCache(includeBank)
+    if not ns.BagData then
+        return
+    end
+    ns.BagData:ScanBags(includeBank == true and ns.BagData:IsBankAvailable() or false)
+    ns.BagData:UpdateCurrentMoney()
+end
+
+function LunaBags:ADDON_LOADED(addonName)
+    if addonName and addonName ~= ADDON_NAME then
+        return
+    end
+    self:UpdateCurrentCharacterCache(false)
+    if addonName == "Blizzard_BankUI" or addonName == ADDON_NAME then
+        self:EnsureBankFrameSuppressionHooks()
+    end
+end
+
+local function GetPlayerBagCapacity()
+    local total = 0
+    for bagID = 0, 4 do
+        local slots = 0
+        if C_Container and C_Container.GetContainerNumSlots then
+            slots = C_Container.GetContainerNumSlots(bagID) or 0
+        else
+            slots = GetContainerNumSlots(bagID) or 0
+        end
+        total = total + slots
+    end
+    return total
+end
+
+function LunaBags:ScheduleStartupScans()
+    if not ns.BagData or not C_Timer or not C_Timer.After then
+        return
+    end
+    local delays = { 0.5, 1.5, 3.0, 6.0, 10.0 }
+    for _, delay in ipairs(delays) do
+        C_Timer.After(delay, function()
+            if not ns.BagData then
+                return
+            end
+            self:UpdateCurrentCharacterCache(true)
+            if self.db and self.db.profile and self.db.profile.debug then
+                self:Print(("Startup scan @ %.1fs (bag capacity=%d, money=%s)"):format(
+                    delay,
+                    GetPlayerBagCapacity(),
+                    tostring(GetMoney and GetMoney() or 0)
+                ))
+            end
+        end)
+    end
+end
+
+function LunaBags:PLAYER_ENTERING_WORLD()
+    self:UpdateCurrentCharacterCache(false)
+    self:ScheduleStartupScans()
+end
+
+function LunaBags:OnDisable()
+    self:UnregisterAllEvents()
+end
+
+function LunaBags:BeginSortSession()
+    self._sortSessionActive = true
+    self._sortDeferredBagUpdate = false
+    self._sortLastLiveRefresh = nil
+end
+
+function LunaBags:EndSortSession()
+    self._sortSessionActive = false
+    self._sortLastLiveRefresh = nil
+    if self._sortDeferredBagUpdate then
+        self._sortDeferredBagUpdate = false
+        self:BAG_UPDATE_DELAYED()
+    end
+end
+
+function LunaBags:BAG_UPDATE_DELAYED()
+    if self._sortSessionActive then
+        self._sortDeferredBagUpdate = true
+        local now = GetTime and GetTime() or 0
+        if not self._sortLastLiveRefresh or now == 0 or (now - self._sortLastLiveRefresh) >= 0.08 then
+            self._sortLastLiveRefresh = now
+            if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+                ns.OneBag:Refresh()
+            end
+            if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+                ns.OneBank:Refresh()
+            end
+        end
+        return
+    end
+    self:UpdateCurrentCharacterCache(true)
+    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+        ns.OneBag:Refresh()
+    end
+    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+        ns.OneBank:Refresh()
+    end
+
+    if self.db.profile.debug then
+        self:Print("Bags cache updated.")
+    end
+end
+
+function LunaBags:PLAYER_MONEY()
+    self:UpdateCurrentCharacterCache(false)
+    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+        ns.OneBag:Refresh()
+    end
+    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+        ns.OneBank:Refresh()
+    end
+end
+
+function LunaBags:PLAYER_LOGOUT()
+    self:UpdateCurrentCharacterCache(true)
+end
+
+function LunaBags:BANKFRAME_OPENED()
+    self:EnsureBankFrameSuppressionHooks()
+    self:BAG_UPDATE_DELAYED()
+    if ns.BagHooks then
+        local now = GetTime and GetTime() or 0
+        ns.BagHooks.bankOpenLatchUntil = now + 1.5
+    end
+    if ns.OneBank then
+        ns.OneBank:Show()
+    end
+    if ns.BagHooks then
+        ns.BagHooks:OpenBags("BankOpen")
+    end
+end
+
+function LunaBags:BANKFRAME_CLOSED()
+    if ns.BagHooks then
+        ns.BagHooks:CloseBags("BankClose")
+    end
+    if ns.OneBank then
+        ns.OneBank:Hide()
+    end
+end
+
+function LunaBags:HandleSlashCommand(input)
+    local raw = input and strtrim(input) or ""
+    local cmd, rest = raw:match("^(%S+)%s*(.-)$")
+    cmd = cmd and cmd:lower() or ""
+
+    if cmd == "open" then
+        OpenAllBags()
+        return
+    end
+
+    if cmd == "close" then
+        CloseAllBags()
+        return
+    end
+
+    if cmd == "toggle" then
+        ToggleAllBags()
+        return
+    end
+
+    if cmd == "dump" then
+        local data = ns.BagData and ns.BagData:GetCharacterData()
+        if data and self.db.profile.debug then
+            self:Print(("Character cache updated at %s."):format(date("%H:%M:%S", data.lastUpdate or time())))
+        else
+            self:Print("Use /lb debug then /lb dump to inspect cache timestamps.")
+        end
+        return
+    end
+
+    if cmd == "dumpchars" then
+        if not ns.BagData then
+            self:Print("BagData module missing.")
+            return
+        end
+        local currentKey = ns.OneBag and ns.OneBag.GetCurrentCharacterKey and ns.OneBag:GetCurrentCharacterKey() or "unknown"
+        local viewKey = ns.OneBag and ns.OneBag.viewCharacterKey or nil
+        local effectiveKey = viewKey or currentKey
+        local viewed = ns.OneBag and ns.OneBag.GetViewedCharacterData and ns.OneBag:GetViewedCharacterData() or nil
+        self:Print(("Current key: %s"):format(tostring(currentKey)))
+        self:Print(("View key: %s"):format(tostring(viewKey)))
+        self:Print(("Effective view key: %s"):format(tostring(effectiveKey)))
+        self:Print(("Viewed record resolved: %s"):format((viewKey == nil or viewed) and "yes" or "no"))
+
+        local all = ns.BagData:GetAllCharacters() or {}
+        local total = 0
+        for _ in pairs(all) do
+            total = total + 1
+        end
+        self:Print(("Characters discovered: %d"):format(total))
+
+        for key, c in ns.BagData:IterCharacters() do
+            local bags = 0
+            local bagSlots = 0
+            local bagSizeTotal = 0
+            local bagBreakdown = {}
+            if c and type(c.bags) == "table" then
+                for bagID, bagData in pairs(c.bags) do
+                    if type(bagData) == "table" then
+                        bags = bags + 1
+                        local bagSize = tonumber(bagData.size) or 0
+                        bagSizeTotal = bagSizeTotal + bagSize
+                        local perBagFilled = 0
+                        local slots = bagData.slots or bagData
+                        if type(slots) == "table" then
+                            for _, item in pairs(slots) do
+                                if item then
+                                    bagSlots = bagSlots + 1
+                                    perBagFilled = perBagFilled + 1
+                                end
+                            end
+                        end
+                        bagBreakdown[#bagBreakdown + 1] = string.format("%s:%d/%d", tostring(bagID), perBagFilled, bagSize)
+                    end
+                end
+            end
+            local money = (c and c.money) or 0
+            local nameRealm = (c and c.name and c.realm) and (c.name .. "-" .. c.realm) or "n/a"
+            self:Print(("[%s] nameRealm=%s money=%s bags=%d slots=%d size=%d"):format(
+                tostring(key),
+                tostring(nameRealm),
+                tostring(money),
+                bags,
+                bagSlots,
+                bagSizeTotal
+            ))
+            if #bagBreakdown > 0 then
+                self:Print(("  bag fill: %s"):format(table.concat(bagBreakdown, ", ")))
+            end
+        end
+        return
+    end
+
+    if cmd == "scan" then
+        if not ns.BagData then
+            self:Print("BagData module missing.")
+            return
+        end
+        ns.BagData:ScanBags(ns.BagData:IsBankAvailable())
+        self:Print("Forced character scan completed.")
+        return
+    end
+
+    if cmd == "dbcheck" then
+        local sv = _G.LunaBagsDB
+        local hasSV = sv ~= nil
+        local hasDB = self.db ~= nil
+        local hasGlobal = hasDB and self.db.global ~= nil
+        local hasChars = hasGlobal and self.db.global.characters ~= nil
+        self:Print(("SV exists: %s | AceDB exists: %s"):format(tostring(hasSV), tostring(hasDB)))
+        self:Print(("AceDB global exists: %s | characters table exists: %s"):format(tostring(hasGlobal), tostring(hasChars)))
+
+        local aceChars = hasChars and self.db.global.characters or nil
+        local svChars = sv and sv.global and sv.global.characters or nil
+        self:Print(("AceDB chars table == SV chars table: %s"):format(tostring(aceChars ~= nil and aceChars == svChars)))
+
+        local aceCount = 0
+        if type(aceChars) == "table" then
+            for _ in pairs(aceChars) do
+                aceCount = aceCount + 1
+            end
+        end
+        local svCount = 0
+        if type(svChars) == "table" then
+            for _ in pairs(svChars) do
+                svCount = svCount + 1
+            end
+        end
+        self:Print(("AceDB character records: %d | SV character records: %d"):format(aceCount, svCount))
+        return
+    end
+
+    if cmd == "view" then
+        if not ns.OneBag then
+            self:Print("OneBag module missing.")
+            return
+        end
+        local key = rest and strtrim(rest) or ""
+        if key == "" or key:lower() == "current" then
+            ns.OneBag.viewCharacterKey = nil
+            if ns.OneBag.frame then
+                ns.OneBag:ApplySettings()
+                ns.OneBag:Refresh()
+            end
+            self:Print("Character view set to current.")
+            return
+        end
+        ns.OneBag.viewCharacterKey = key
+        if ns.OneBag.frame then
+            ns.OneBag:ApplySettings()
+            ns.OneBag:Refresh()
+        end
+        self:Print(("Character view set to: %s"):format(key))
+        return
+    end
+
+    if cmd == "debug" then
+        self.db.profile.debug = not self.db.profile.debug
+        self:Print(("Debug is now %s."):format(self.db.profile.debug and "ON" or "OFF"))
+        return
+    end
+
+    if cmd == "window" then
+        if ns.ExtraStyleWindow then
+            ns.ExtraStyleWindow:Show()
+        end
+        return
+    end
+
+    if cmd == "enable" then
+        self.db.profile.enabled = true
+        self:Print("Addon enabled.")
+        return
+    end
+
+    if cmd == "disable" then
+        self.db.profile.enabled = false
+        self:Print("Addon disabled.")
+        return
+    end
+
+    if ns.OpenConfig then
+        ns.OpenConfig()
+        return
+    end
+
+    self:Print("Commands: /lunabags [open|close|toggle|view <Name-Realm|current>|scan|dbcheck|debug|enable|disable|dump|dumpchars|window]")
+end
