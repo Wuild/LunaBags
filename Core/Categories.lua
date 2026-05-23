@@ -248,6 +248,29 @@ function Categories:RegisterMatcher(name, fn)
     end
 end
 
+function Categories:AddItemIDRule(category, itemID)
+    if type(category) ~= "table" then
+        return false
+    end
+    itemID = tonumber(itemID)
+    if not itemID then
+        return false
+    end
+
+    category.rules = category.rules or {}
+    local existing = SplitCSV(category.rules.itemIDs)
+    local itemIDText = tostring(itemID)
+    for _, token in ipairs(existing) do
+        if tonumber(token) == itemID then
+            return false
+        end
+    end
+
+    existing[#existing + 1] = itemIDText
+    category.rules.itemIDs = table.concat(existing, ",")
+    return true
+end
+
 local function MatchEquipmentSet(item)
     if not item or not item.itemID then return false end
 

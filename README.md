@@ -2,6 +2,11 @@
 
 LunaBags is a World of Warcraft Classic inventory addon that replaces the default bag and bank views with a single-window layout, sorting, per-character cached item views, category sections, and tooltip item counts.
 
+[![Support on Patreon](https://img.shields.io/badge/Support-Patreon-ff424d?logo=patreon&logoColor=white)](https://www.patreon.com/wuild)
+
+
+![LunaBags inventory window](Art/inventory.png)
+
 ## Install
 
 1. Copy this `LunaBags` folder into your WoW Classic addons directory:
@@ -50,8 +55,8 @@ Bag and bank item buttons keep Blizzard's normal item behavior, so clicking, usi
 Open `/lb`, then use:
 
 - **UI > Appearance** for shared bag and bank colors, opacity, item frame color, border size, stack-count text size, and cooldown text size.
-- **UI > Bags** for bag columns, item size, spacing, frame scale, lock position, and split rows.
-- **UI > Bank** for bank columns, item size, spacing, frame scale, lock position, and reset position.
+- **UI > Bags** for bag window width, max height, item size, spacing, frame scale, lock position, and split rows.
+- **UI > Bank** for bank window width, max height, item size, spacing, frame scale, lock position, and reset position.
 - **Plugins** for quality borders and trash item markers.
 - **Profiles** for AceDB profile switching, copying, and resets.
 
@@ -112,7 +117,8 @@ Supported category rules:
 - **Equip Locations**: comma-separated equip location tokens, such as `INVTYPE_HEAD` or `INVTYPE_TRINKET`.
 - **Equipment Set Items**: matches items from Blizzard Equipment Manager, ItemRack, or Outfitter when those APIs/addons are available.
 - **Minimum Slots**: reserves visible empty slots in a category section.
-- **Category Columns**: places multiple category sections side by side.
+- **Category Columns**: controls the default side-by-side category density.
+- **Section Columns**: overrides how many item columns an individual category section uses.
 
 Items that do not match a category remain in the normal uncategorized flow.
 

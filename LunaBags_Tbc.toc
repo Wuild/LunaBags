@@ -1,4 +1,4 @@
-## Interface: 11507
+## Interface: 20505
 ## Title: LunaBags
 ## Notes: A clean one-bag inventory and bank with sorting and categories.
 ## IconTexture: Interface\Icons\INV_Misc_Bag_08

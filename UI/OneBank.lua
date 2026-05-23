@@ -21,6 +21,24 @@ local BANK_BAGS = { -1, 5, 6, 7, 8, 9, 10, 11 }
 local BANK_BAG_SLOTS = { 5, 6, 7, 8, 9, 10, 11 }
 local BANK_FRAME_STRATA = "DIALOG"
 local BANK_FRAME_LEVEL = 40
+local BANK_FRAME_PADDING_X = 26
+local BANK_DEFAULT_MAX_HEIGHT = 650
+
+local function CalculateWindowWidthFromColumns(columns, slotSize, spacing)
+    columns = math.max(1, math.floor(tonumber(columns) or 1))
+    slotSize = tonumber(slotSize) or 36
+    spacing = tonumber(spacing) or 4
+    local gridWidth = columns * slotSize + math.max(0, columns - 1) * spacing
+    return gridWidth + (spacing * 2) + BANK_FRAME_PADDING_X
+end
+
+local function CalculateColumnsFromWindowWidth(windowWidth, slotSize, spacing)
+    windowWidth = tonumber(windowWidth) or CalculateWindowWidthFromColumns(14, slotSize, spacing)
+    slotSize = tonumber(slotSize) or 36
+    spacing = tonumber(spacing) or 4
+    local gridSpace = math.max(slotSize, windowWidth - BANK_FRAME_PADDING_X - (spacing * 2))
+    return math.max(1, math.floor((gridSpace + spacing) / (slotSize + spacing)))
+end
 
 local function EnsureStackSplitFrameAboveBank()
     local splitFrame = _G.StackSplitFrame
@@ -70,6 +88,248 @@ local function ApplyBankFrameLayering(frame)
     if frame.SortButton then
         frame.SortButton:SetFrameLevel(BANK_FRAME_LEVEL + 15)
     end
+    if frame.ResizeGrip then
+        frame.ResizeGrip:SetFrameLevel(BANK_FRAME_LEVEL + 18)
+    end
+    if frame.LeftResizeGrip then
+        frame.LeftResizeGrip:SetFrameLevel(BANK_FRAME_LEVEL + 18)
+    end
+end
+
+local function NotifyOptionsChanged()
+    if not LibStub then
+        return
+    end
+    local registry = LibStub("AceConfigRegistry-3.0", true)
+    if registry then
+        registry:NotifyChange("LunaBags")
+    end
+end
+
+local function EnsureResizeGrip(owner, frame)
+    if not frame.ResizeGrip then
+        local grip = CreateFrame("Button", nil, frame)
+        grip:SetSize(16, 16)
+        grip:SetNormalTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Up")
+        grip:SetHighlightTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Highlight")
+        grip:SetPushedTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Down")
+        grip:EnableMouse(true)
+        grip:SetScript("OnMouseDown", function(_, button)
+            if button == "LeftButton" then
+                owner:StartResize("right")
+            end
+        end)
+        grip:SetScript("OnMouseUp", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnHide", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Resize")
+            GameTooltip:Show()
+        end)
+        grip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        frame.ResizeGrip = grip
+    end
+    frame.ResizeGrip:ClearAllPoints()
+    frame.ResizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    frame.ResizeGrip:SetFrameLevel(BANK_FRAME_LEVEL + 18)
+
+    if not frame.LeftResizeGrip then
+        local grip = CreateFrame("Button", nil, frame)
+        grip:SetSize(16, 16)
+        grip:SetNormalTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Up")
+        grip:SetHighlightTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Highlight")
+        grip:SetPushedTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Down")
+        grip:EnableMouse(true)
+        grip:SetScript("OnMouseDown", function(_, button)
+            if button == "LeftButton" then
+                owner:StartResize("left")
+            end
+        end)
+        grip:SetScript("OnMouseUp", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnHide", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Resize")
+            GameTooltip:Show()
+        end)
+        grip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        frame.LeftResizeGrip = grip
+    end
+    local normal = frame.LeftResizeGrip.GetNormalTexture and frame.LeftResizeGrip:GetNormalTexture()
+    if normal then
+        normal:SetTexCoord(1, 0, 0, 1)
+    end
+    local highlight = frame.LeftResizeGrip.GetHighlightTexture and frame.LeftResizeGrip:GetHighlightTexture()
+    if highlight then
+        highlight:SetTexCoord(1, 0, 0, 1)
+    end
+    local pushed = frame.LeftResizeGrip.GetPushedTexture and frame.LeftResizeGrip:GetPushedTexture()
+    if pushed then
+        pushed:SetTexCoord(1, 0, 0, 1)
+    end
+    frame.LeftResizeGrip:ClearAllPoints()
+    frame.LeftResizeGrip:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    frame.LeftResizeGrip:SetFrameLevel(BANK_FRAME_LEVEL + 18)
+end
+
+local function GetScrollBar(scrollFrame)
+    if not scrollFrame then
+        return nil
+    end
+    return scrollFrame.ScrollBar or scrollFrame.scrollBar or (scrollFrame.GetName and _G[(scrollFrame:GetName() or "") .. "ScrollBar"])
+end
+
+local function SetScrollControlsShown(scrollFrame, shown)
+    if not scrollFrame then
+        return
+    end
+    local scrollBar = GetScrollBar(scrollFrame)
+    if scrollBar then
+        scrollBar:SetShown(shown)
+        if shown then
+            scrollBar:Show()
+        else
+            scrollBar:Hide()
+        end
+    end
+    if scrollFrame.LunaBagsScrollTrack then
+        scrollFrame.LunaBagsScrollTrack:SetShown(shown)
+    end
+    if scrollFrame.LunaBagsScrollUpButton then
+        scrollFrame.LunaBagsScrollUpButton:SetShown(shown)
+    end
+    if scrollFrame.LunaBagsScrollDownButton then
+        scrollFrame.LunaBagsScrollDownButton:SetShown(shown)
+    end
+end
+
+local function StyleScrollButton(button, label)
+    if not button then
+        return
+    end
+    button:SetSize(12, 12)
+    if button.SetNormalTexture then
+        button:SetNormalTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    if button.SetPushedTexture then
+        button:SetPushedTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    if button.SetHighlightTexture then
+        button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    local normal = button.GetNormalTexture and button:GetNormalTexture()
+    if normal then
+        normal:SetVertexColor(0.10, 0.10, 0.10, 0.95)
+    end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then
+        pushed:SetVertexColor(0.16, 0.16, 0.16, 1)
+    end
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then
+        highlight:SetVertexColor(0.28, 0.28, 0.28, 0.55)
+    end
+    if not button.LunaBagsLabel then
+        button.LunaBagsLabel = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.LunaBagsLabel:SetPoint("CENTER", button, "CENTER", 0, 0)
+    end
+    button.LunaBagsLabel:SetText(label)
+    button.LunaBagsLabel:SetTextColor(0.78, 0.78, 0.78, 1)
+end
+
+local function StyleScrollFrame(scrollFrame)
+    if not scrollFrame then
+        return
+    end
+    local scrollBar = GetScrollBar(scrollFrame)
+    if not scrollBar then
+        return
+    end
+    local scrollName = scrollBar.GetName and scrollBar:GetName() or nil
+    local upButton = scrollBar.ScrollUpButton or scrollBar.ScrollUp or (scrollName and (_G[scrollName .. "ScrollUpButton"] or _G[scrollName .. "UpButton"]))
+    local downButton = scrollBar.ScrollDownButton or scrollBar.ScrollDown or (scrollName and (_G[scrollName .. "ScrollDownButton"] or _G[scrollName .. "DownButton"]))
+
+    scrollBar:ClearAllPoints()
+    scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -14)
+    scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", -2, 14)
+    scrollBar:SetWidth(10)
+    scrollBar:SetFrameLevel((scrollFrame:GetFrameLevel() or BANK_FRAME_LEVEL) + 2)
+
+    if not scrollFrame.LunaBagsScrollTrack then
+        scrollFrame.LunaBagsScrollTrack = CreateFrame("Frame", nil, scrollFrame, "BackdropTemplate")
+        scrollFrame.LunaBagsScrollTrack:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+    end
+    scrollFrame.LunaBagsScrollTrack:ClearAllPoints()
+    scrollFrame.LunaBagsScrollTrack:SetPoint("TOPLEFT", scrollBar, "TOPLEFT", -1, 0)
+    scrollFrame.LunaBagsScrollTrack:SetPoint("BOTTOMRIGHT", scrollBar, "BOTTOMRIGHT", 1, 0)
+    scrollFrame.LunaBagsScrollTrack:SetFrameLevel(scrollBar:GetFrameLevel() - 1)
+    scrollFrame.LunaBagsScrollTrack:SetBackdropColor(0.035, 0.035, 0.035, 0.72)
+    scrollFrame.LunaBagsScrollTrack:SetBackdropBorderColor(0.18, 0.18, 0.18, 0.85)
+
+    local thumb = scrollBar.GetThumbTexture and scrollBar:GetThumbTexture() or scrollBar.ThumbTexture
+    if thumb then
+        thumb:SetTexture("Interface\\Buttons\\WHITE8X8")
+        thumb:SetVertexColor(0.42, 0.42, 0.42, 0.92)
+        thumb:SetWidth(8)
+    end
+
+    if upButton then
+        scrollFrame.LunaBagsScrollUpButton = upButton
+        upButton:ClearAllPoints()
+        upButton:SetPoint("BOTTOM", scrollBar, "TOP", 0, 2)
+        StyleScrollButton(upButton, "^")
+    end
+    if downButton then
+        scrollFrame.LunaBagsScrollDownButton = downButton
+        downButton:ClearAllPoints()
+        downButton:SetPoint("TOP", scrollBar, "BOTTOM", 0, -2)
+        StyleScrollButton(downButton, "v")
+    end
+end
+
+local function EnsureScrollFrame(frame)
+    if not frame or not frame.content then
+        return nil
+    end
+    if not frame.ScrollFrame then
+        frame.ScrollFrame = CreateFrame("ScrollFrame", "LunaBagsOneBankScrollFrame", frame, "UIPanelScrollFrameTemplate")
+        frame.ScrollFrame:SetFrameLevel(BANK_FRAME_LEVEL + 5)
+        frame.ScrollFrame:EnableMouseWheel(true)
+        frame.ScrollFrame:SetScript("OnMouseWheel", function(scrollFrame, delta)
+            local maxScroll = math.max(0, scrollFrame:GetVerticalScrollRange() or 0)
+            if maxScroll <= 0 then
+                return
+            end
+            local step = 48
+            local current = scrollFrame:GetVerticalScroll() or 0
+            scrollFrame:SetVerticalScroll(math.max(0, math.min(maxScroll, current - (delta * step))))
+        end)
+    end
+    if frame.content.SetParent and frame.content:GetParent() ~= frame.ScrollFrame then
+        frame.content:SetParent(frame.ScrollFrame)
+    end
+    frame.content:SetFrameLevel(BANK_FRAME_LEVEL + 5)
+    if frame.ScrollFrame:GetScrollChild() ~= frame.content then
+        frame.ScrollFrame:SetScrollChild(frame.content)
+    end
+    StyleScrollFrame(frame.ScrollFrame)
+    return frame.ScrollFrame
 end
 
 local function IsDebugEnabled()
@@ -79,9 +339,15 @@ end
 
 local function Clamp01(value, fallback)
     value = tonumber(value)
-    if value == nil then return fallback end
-    if value < 0 then return 0 end
-    if value > 1 then return 1 end
+    if value == nil then
+        return fallback
+    end
+    if value < 0 then
+        return 0
+    end
+    if value > 1 then
+        return 1
+    end
     return value
 end
 
@@ -90,8 +356,8 @@ local function GetColorValue(color, r, g, b)
         return r, g, b
     end
     return tonumber(color.r or color[1]) or r,
-        tonumber(color.g or color[2]) or g,
-        tonumber(color.b or color[3]) or b
+    tonumber(color.g or color[2]) or g,
+    tonumber(color.b or color[3]) or b
 end
 
 local function GetAppearanceConfig(cfg)
@@ -113,6 +379,10 @@ local function GetAppearanceConfig(cfg)
 end
 
 local function ApplyWindowAppearance(frame, cfg)
+    if ns.WindowChrome and ns.WindowChrome.ApplyAppearance then
+        ns.WindowChrome.ApplyAppearance(frame, cfg)
+        return
+    end
     if not frame then
         return
     end
@@ -263,6 +533,93 @@ local function FormatSlotUsageText(used, total)
     return ("%d/%d"):format(tonumber(used) or 0, tonumber(total) or 0)
 end
 
+local function GetCursorItemID()
+    if not GetCursorInfo then
+        return nil
+    end
+    local cursorType, value1, value2, value3 = GetCursorInfo()
+    if cursorType ~= "item" then
+        return nil
+    end
+    if tonumber(value1) then
+        return tonumber(value1)
+    end
+    local function MatchItemID(value)
+        if type(value) == "string" then
+            local itemID = tonumber(value:match("item:(%d+)"))
+            if itemID then
+                return itemID
+            end
+        end
+        return nil
+    end
+    return MatchItemID(value1) or MatchItemID(value2) or MatchItemID(value3)
+end
+
+local function AssignCursorItemToCategory(owner, category)
+    local itemID = GetCursorItemID()
+    if not itemID or not category or not ns.Categories or not ns.Categories.AddItemIDRule then
+        return false
+    end
+
+    local added = ns.Categories:AddItemIDRule(category, itemID)
+    if ClearCursor then
+        ClearCursor()
+    end
+    if added then
+        if owner then
+            owner._layoutModel = nil
+            if owner.Refresh then
+                owner:Refresh()
+            end
+        end
+        NotifyOptionsChanged()
+        if ns.LunaBags and ns.LunaBags.Print then
+            ns.LunaBags:Print(("Added item ID %d to category %s."):format(itemID, category.name or "Category"))
+        end
+    elseif ns.LunaBags and ns.LunaBags.Print then
+        ns.LunaBags:Print(("Item ID %d is already assigned to category %s."):format(itemID, category.name or "Category"))
+    end
+    return added
+end
+
+local function ConfigureCategoryPlaceholder(frame, owner, category)
+    if not frame then
+        return
+    end
+    frame.category = category
+    frame:EnableMouse(category ~= nil)
+    frame:SetScript("OnReceiveDrag", nil)
+    frame:SetScript("OnMouseUp", nil)
+    frame:SetScript("OnEnter", nil)
+    frame:SetScript("OnLeave", nil)
+    if not category then
+        return
+    end
+
+    frame:SetScript("OnReceiveDrag", function(self)
+        AssignCursorItemToCategory(owner, self.category)
+    end)
+    frame:SetScript("OnMouseUp", function(self, button)
+        if button == "LeftButton" and CursorHasItem and CursorHasItem() then
+            AssignCursorItemToCategory(owner, self.category)
+        end
+    end)
+    frame:SetScript("OnEnter", function(self)
+        if GameTooltip and CursorHasItem and CursorHasItem() then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Assign item to category")
+            GameTooltip:AddLine(category.name or "Category", 0.85, 0.85, 0.85)
+            GameTooltip:Show()
+        end
+    end)
+    frame:SetScript("OnLeave", function()
+        if GameTooltip then
+            GameTooltip:Hide()
+        end
+    end)
+end
+
 local function AddBankMoneyTooltipBreakdown(owner)
     if not ns.BagData then
         return
@@ -355,7 +712,9 @@ local function EnsureItemCooldown(button)
 end
 
 local function ClearItemCooldown(button)
-    if not button or not button.cooldown then return end
+    if not button or not button.cooldown then
+        return
+    end
     if CooldownFrame_Set then
         CooldownFrame_Set(button.cooldown, 0, 0, 0)
     else
@@ -368,7 +727,9 @@ local function UpdateItemCooldown(button, bagID, slot)
         return
     end
     local cd = EnsureItemCooldown(button)
-    if not cd then return end
+    if not cd then
+        return
+    end
     local start, duration, enable
     if C_Container and C_Container.GetContainerItemCooldown then
         start, duration, enable = C_Container.GetContainerItemCooldown(bagID, slot)
@@ -556,70 +917,101 @@ local function ApplyButtonStyle(button)
         end
     end
     local normal = button.GetNormalTexture and button:GetNormalTexture()
-    if normal then normal:SetTexture(nil); normal:Hide() end
+    if normal then
+        normal:SetTexture(nil);
+        normal:Hide()
+    end
     local pushed = button.GetPushedTexture and button:GetPushedTexture()
-    if pushed then pushed:SetTexture(nil); pushed:Hide() end
+    if pushed then
+        pushed:SetTexture(nil);
+        pushed:Hide()
+    end
     local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
-    if highlight then highlight:SetTexture(nil); highlight:Hide() end
+    if highlight then
+        highlight:SetTexture(nil);
+        highlight:Hide()
+    end
     local checked = button.GetCheckedTexture and button:GetCheckedTexture()
-    if checked then checked:SetTexture(nil); checked:Hide() end
-    if button.IconBorder then button.IconBorder:SetAlpha(0); button.IconBorder:Hide() end
-    if button.Background then button.Background:SetTexture(nil); button.Background:Hide() end
-    if button.IconOverlay then button.IconOverlay:SetTexture(nil); button.IconOverlay:Hide() end
-    if button.searchOverlay then button.searchOverlay:Hide() end
+    if checked then
+        checked:SetTexture(nil);
+        checked:Hide()
+    end
+    if button.IconBorder then
+        button.IconBorder:SetAlpha(0);
+        button.IconBorder:Hide()
+    end
+    if button.Background then
+        button.Background:SetTexture(nil);
+        button.Background:Hide()
+    end
+    if button.IconOverlay then
+        button.IconOverlay:SetTexture(nil);
+        button.IconOverlay:Hide()
+    end
+    if button.searchOverlay then
+        button.searchOverlay:Hide()
+    end
 
     if not button.StyleStateHooks then
         local function Brighten(v, amount)
             return math.min(1, (v or 0) + amount)
         end
         local function SetIdle(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(0.13, 0.13, 0.13, 0.92)
             self.StyleBorder:SetBackdropBorderColor(
-                self.StyleBorderBaseR or 0.34,
-                self.StyleBorderBaseG or 0.34,
-                self.StyleBorderBaseB or 0.34,
-                self.StyleBorderBaseA or 0.95
+                    self.StyleBorderBaseR or 0.34,
+                    self.StyleBorderBaseG or 0.34,
+                    self.StyleBorderBaseB or 0.34,
+                    self.StyleBorderBaseA or 0.95
             )
-            if self.StyleGlow then self.StyleGlow:Hide() end
+            if self.StyleGlow then
+                self.StyleGlow:Hide()
+            end
         end
         local function SetHover(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(0.17, 0.17, 0.17, 0.95)
             self.StyleBorder:SetBackdropBorderColor(
-                Brighten(self.StyleBorderBaseR or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.10),
-                self.StyleBorderBaseA or 0.98
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.10),
+                    self.StyleBorderBaseA or 0.98
             )
             if self.StyleGlow then
                 self.StyleGlow:SetBackdropBorderColor(
-                    Brighten(self.StyleBorderBaseR or 0.34, 0.18),
-                    Brighten(self.StyleBorderBaseG or 0.34, 0.18),
-                    Brighten(self.StyleBorderBaseB or 0.34, 0.18),
-                    0.9
+                        Brighten(self.StyleBorderBaseR or 0.34, 0.18),
+                        Brighten(self.StyleBorderBaseG or 0.34, 0.18),
+                        Brighten(self.StyleBorderBaseB or 0.34, 0.18),
+                        0.9
                 )
                 self.StyleGlow:Show()
             end
         end
         local function SetDrag(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(math.max(0.1, (self._baseAlpha or 1) * 0.72))
             self.StyleBG:SetBackdropColor(0.20, 0.20, 0.20, 0.98)
             self.StyleBorder:SetBackdropBorderColor(
-                Brighten(self.StyleBorderBaseR or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.20),
-                1
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.20),
+                    1
             )
             if self.StyleGlow then
                 self.StyleGlow:SetBackdropBorderColor(
-                    Brighten(self.StyleBorderBaseR or 0.34, 0.22),
-                    Brighten(self.StyleBorderBaseG or 0.34, 0.22),
-                    Brighten(self.StyleBorderBaseB or 0.34, 0.22),
-                    0.95
+                        Brighten(self.StyleBorderBaseR or 0.34, 0.22),
+                        Brighten(self.StyleBorderBaseG or 0.34, 0.22),
+                        Brighten(self.StyleBorderBaseB or 0.34, 0.22),
+                        0.95
                 )
                 self.StyleGlow:Show()
             end
@@ -628,11 +1020,19 @@ local function ApplyButtonStyle(button)
         button:HookScript("OnLeave", SetIdle)
         button:HookScript("OnMouseDown", SetDrag)
         button:HookScript("OnMouseUp", function(self)
-            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
+            if self:IsMouseOver() then
+                SetHover(self)
+            else
+                SetIdle(self)
+            end
         end)
         button:HookScript("OnDragStart", SetDrag)
         button:HookScript("OnReceiveDrag", function(self)
-            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
+            if self:IsMouseOver() then
+                SetHover(self)
+            else
+                SetIdle(self)
+            end
         end)
         button:HookScript("OnHide", SetIdle)
         button.StyleStateHooks = true
@@ -675,9 +1075,18 @@ local function UpdateButtonStyleBorderForItem(button, item)
     local r, g, b, a = ResolveQualityBorderColor(quality)
     button.StyleBorderBaseR, button.StyleBorderBaseG, button.StyleBorderBaseB, button.StyleBorderBaseA = r, g, b, a
     button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
-    if button.IconBorder then button.IconBorder:SetAlpha(0); button.IconBorder:Hide() end
-    if button.Background then button.Background:SetTexture(nil); button.Background:Hide() end
-    if button.IconOverlay then button.IconOverlay:SetTexture(nil); button.IconOverlay:Hide() end
+    if button.IconBorder then
+        button.IconBorder:SetAlpha(0);
+        button.IconBorder:Hide()
+    end
+    if button.Background then
+        button.Background:SetTexture(nil);
+        button.Background:Hide()
+    end
+    if button.IconOverlay then
+        button.IconOverlay:SetTexture(nil);
+        button.IconOverlay:Hide()
+    end
 end
 
 local function EnsureBankPlaceholder(parent, index)
@@ -703,13 +1112,47 @@ function OneBank:UpdateSearchLayout()
     if not self.frame or not self.frame.content then
         return
     end
+    local scrollFrame = EnsureScrollFrame(self.frame)
     local topInset = self.searchVisible and 34 or 12
-    self.frame.content:ClearAllPoints()
-    self.frame.content:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
-    self.frame.content:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+    if scrollFrame then
+        scrollFrame:ClearAllPoints()
+        scrollFrame:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
+        scrollFrame:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+        self.frame.content:ClearAllPoints()
+        self.frame.content:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
+    else
+        self.frame.content:ClearAllPoints()
+        self.frame.content:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
+        self.frame.content:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+    end
     if self.frame.SearchPanel then
         self.frame.SearchPanel:SetShown(self.searchVisible)
     end
+end
+
+function OneBank:UpdateScrollFrame(contentHeight, viewportHeight)
+    if not self.frame or not self.frame.content then
+        return
+    end
+    local scrollFrame = EnsureScrollFrame(self.frame)
+    if not scrollFrame then
+        return
+    end
+    local contentWidth = math.max(1, scrollFrame:GetWidth() or self.frame.content:GetWidth() or 1)
+    local childHeight = math.max(contentHeight or 1, viewportHeight or 1, 1)
+    self._scrollContentHeight = contentHeight or 1
+    self._scrollViewportHeight = viewportHeight or 1
+    self.frame.content:SetSize(contentWidth, childHeight)
+    local overflow = (contentHeight or 0) > ((viewportHeight or 0) + 1)
+    scrollFrame:EnableMouseWheel(overflow)
+    if not overflow then
+        scrollFrame:SetVerticalScroll(0)
+    else
+        local maxScroll = math.max(0, childHeight - (viewportHeight or 0))
+        local current = math.min(scrollFrame:GetVerticalScroll() or 0, maxScroll)
+        scrollFrame:SetVerticalScroll(current)
+    end
+    SetScrollControlsShown(scrollFrame, overflow)
 end
 
 function OneBank:CreateFrame()
@@ -762,18 +1205,41 @@ function OneBank:CreateFrame()
         end
     end)
     frame.content = frame.Content or frame.content
+    EnsureScrollFrame(frame)
 
-    if frame.TitleText then frame.TitleText:Hide() end
-    if frame.TitleBg then frame.TitleBg:Hide() end
-    if frame.TopLeftCorner then frame.TopLeftCorner:Hide() end
-    if frame.TopRightCorner then frame.TopRightCorner:Hide() end
-    if frame.TopBorder then frame.TopBorder:Hide() end
-    if frame.LeftBorder then frame.LeftBorder:Hide() end
-    if frame.RightBorder then frame.RightBorder:Hide() end
-    if frame.BottomBorder then frame.BottomBorder:Hide() end
-    if frame.BottomLeftCorner then frame.BottomLeftCorner:Hide() end
-    if frame.BottomRightCorner then frame.BottomRightCorner:Hide() end
-    if frame.Bg then frame.Bg:Hide() end
+    if frame.TitleText then
+        frame.TitleText:Hide()
+    end
+    if frame.TitleBg then
+        frame.TitleBg:Hide()
+    end
+    if frame.TopLeftCorner then
+        frame.TopLeftCorner:Hide()
+    end
+    if frame.TopRightCorner then
+        frame.TopRightCorner:Hide()
+    end
+    if frame.TopBorder then
+        frame.TopBorder:Hide()
+    end
+    if frame.LeftBorder then
+        frame.LeftBorder:Hide()
+    end
+    if frame.RightBorder then
+        frame.RightBorder:Hide()
+    end
+    if frame.BottomBorder then
+        frame.BottomBorder:Hide()
+    end
+    if frame.BottomLeftCorner then
+        frame.BottomLeftCorner:Hide()
+    end
+    if frame.BottomRightCorner then
+        frame.BottomRightCorner:Hide()
+    end
+    if frame.Bg then
+        frame.Bg:Hide()
+    end
     if frame.Header then
         frame.Header:Hide()
     end
@@ -873,8 +1339,12 @@ function OneBank:CreateFrame()
     if not frame.SearchEditBox then
         frame.SearchEditBox = CreateFrame("EditBox", "LunaBagsOneBankSearchEditBox", frame.SearchEditBackdrop, "InputBoxTemplate")
         frame.SearchEditBox:SetAutoFocus(false)
-        frame.SearchEditBox:SetScript("OnEscapePressed", function(editBox) editBox:ClearFocus() end)
-        frame.SearchEditBox:SetScript("OnEnterPressed", function(editBox) editBox:ClearFocus() end)
+        frame.SearchEditBox:SetScript("OnEscapePressed", function(editBox)
+            editBox:ClearFocus()
+        end)
+        frame.SearchEditBox:SetScript("OnEnterPressed", function(editBox)
+            editBox:ClearFocus()
+        end)
         frame.SearchEditBox:SetScript("OnTextChanged", LunaBagsOneBank_SearchChanged)
     end
     frame.SearchEditBox:ClearAllPoints()
@@ -952,8 +1422,11 @@ function OneBank:CreateFrame()
         GameTooltip:SetText("Bank - Current Character")
         GameTooltip:Show()
     end)
-    frame.CharacterButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    frame.CharacterButton:SetScript("OnClick", function() end)
+    frame.CharacterButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    frame.CharacterButton:SetScript("OnClick", function()
+    end)
 
     if not frame.RailToggleButton then
         frame.RailToggleButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -984,7 +1457,9 @@ function OneBank:CreateFrame()
     frame.SettingsButton:SetSize(18, 18)
     frame.SettingsButton:SetPoint("LEFT", frame.TitleBarBg, "LEFT", 93, 0)
     frame.SettingsButton:SetScript("OnClick", function()
-        if ns.OpenConfig then ns.OpenConfig() end
+        if ns.OpenConfig then
+            ns.OpenConfig()
+        end
     end)
     frame.SettingsButton:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
@@ -1007,7 +1482,9 @@ function OneBank:CreateFrame()
         end
         if frame.MoneyBar.GetStatusBarTexture then
             local tex = frame.MoneyBar:GetStatusBarTexture()
-            if tex then tex:SetAlpha(0) end
+            if tex then
+                tex:SetAlpha(0)
+            end
         end
         if frame.MoneyBar.Label then
             frame.MoneyBar.Label:SetFontObject("GameFontNormal")
@@ -1032,6 +1509,7 @@ function OneBank:CreateFrame()
     end
     frame.BagSlots:ClearAllPoints()
     frame.BagSlots:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 0)
+    EnsureResizeGrip(self, frame)
     ApplyBankFrameLayering(frame)
 
     self.frame = frame
@@ -1041,7 +1519,9 @@ end
 
 function OneBank:AcquireBagButton(index)
     local btn = self.bagButtons[index]
-    if btn then return btn end
+    if btn then
+        return btn
+    end
 
     btn = CreateFrame("Button", "LunaBagsBankBagSlotButton" .. index, self.frame.BagSlots, "BackdropTemplate")
     btn:SetSize(34, 34)
@@ -1081,10 +1561,10 @@ function OneBank:AcquireBagButton(index)
             local g = button.StyleBorderBaseG or 0.34
             local b = button.StyleBorderBaseB or 0.34
             button.StyleBorder:SetBackdropBorderColor(
-                math.min(1, r + 0.12),
-                math.min(1, g + 0.12),
-                math.min(1, b + 0.12),
-                1
+                    math.min(1, r + 0.12),
+                    math.min(1, g + 0.12),
+                    math.min(1, b + 0.12),
+                    1
             )
         end
         OneBank:SetBagSlotPreview(button.bagID)
@@ -1093,10 +1573,10 @@ function OneBank:AcquireBagButton(index)
         GameTooltip:Hide()
         if btn.StyleBorder then
             btn.StyleBorder:SetBackdropBorderColor(
-                btn.StyleBorderBaseR or 0.34,
-                btn.StyleBorderBaseG or 0.34,
-                btn.StyleBorderBaseB or 0.34,
-                btn.StyleBorderBaseA or 0.95
+                    btn.StyleBorderBaseR or 0.34,
+                    btn.StyleBorderBaseG or 0.34,
+                    btn.StyleBorderBaseB or 0.34,
+                    btn.StyleBorderBaseA or 0.95
             )
         end
         OneBank:SetBagSlotPreview(nil)
@@ -1113,10 +1593,14 @@ function OneBank:AcquireBagButton(index)
             local menu = {
                 {
                     text = "Split This Bank Bag Section",
-                    checked = function() return canSplit and IsBankBagSplitEnabled(bagID) end,
+                    checked = function()
+                        return canSplit and IsBankBagSplitEnabled(bagID)
+                    end,
                     disabled = not canSplit,
                     func = function()
-                        if not canSplit then return end
+                        if not canSplit then
+                            return
+                        end
                         SetBankBagSplitEnabled(bagID, not IsBankBagSplitEnabled(bagID))
                         OneBank:Refresh()
                     end,
@@ -1128,7 +1612,9 @@ function OneBank:AcquireBagButton(index)
                 EasyMenu(menu, LunaBagsBankBagRailMenu, "cursor", 0, 0, "MENU")
             else
                 UIDropDownMenu_Initialize(LunaBagsBankBagRailMenu, function(_, level)
-                    if level ~= 1 then return end
+                    if level ~= 1 then
+                        return
+                    end
                     for _, entry in ipairs(menu) do
                         local info = UIDropDownMenu_CreateInfo()
                         info.text = entry.text
@@ -1152,7 +1638,9 @@ function OneBank:AcquireBagButton(index)
             end
             return
         end
-        if not button.invSlot then return end
+        if not button.invSlot then
+            return
+        end
         if CursorHasItem() then
             PutItemInBag(button.invSlot)
             return
@@ -1162,17 +1650,23 @@ function OneBank:AcquireBagButton(index)
         OneBank:Refresh()
     end)
     btn:SetScript("OnDragStart", function(button)
-        if button.invSlot then PickupBagFromSlot(button.invSlot) end
+        if button.invSlot then
+            PickupBagFromSlot(button.invSlot)
+        end
     end)
     btn:SetScript("OnReceiveDrag", function(button)
-        if button.invSlot then PutItemInBag(button.invSlot) end
+        if button.invSlot then
+            PutItemInBag(button.invSlot)
+        end
     end)
     self.bagButtons[index] = btn
     return btn
 end
 
 function OneBank:RefreshBagSlots()
-    if not self.frame or not self.frame.BagSlots then return end
+    if not self.frame or not self.frame.BagSlots then
+        return
+    end
     if not self.showBagRail then
         self.frame.BagSlots:Hide()
         return
@@ -1208,10 +1702,10 @@ function OneBank:RefreshBagSlots()
                     button.StyleBorderBaseR, button.StyleBorderBaseG, button.StyleBorderBaseB, button.StyleBorderBaseA = 0.34, 0.34, 0.34, 0.95
                 end
                 button.StyleBorder:SetBackdropBorderColor(
-                    button.StyleBorderBaseR,
-                    button.StyleBorderBaseG,
-                    button.StyleBorderBaseB,
-                    button.StyleBorderBaseA
+                        button.StyleBorderBaseR,
+                        button.StyleBorderBaseG,
+                        button.StyleBorderBaseB,
+                        button.StyleBorderBaseA
                 )
             end
         else
@@ -1224,10 +1718,10 @@ function OneBank:RefreshBagSlots()
             if button.StyleBorder then
                 button.StyleBorderBaseR, button.StyleBorderBaseG, button.StyleBorderBaseB, button.StyleBorderBaseA = 0.56, 0.44, 0.14, 0.95
                 button.StyleBorder:SetBackdropBorderColor(
-                    button.StyleBorderBaseR,
-                    button.StyleBorderBaseG,
-                    button.StyleBorderBaseB,
-                    button.StyleBorderBaseA
+                        button.StyleBorderBaseR,
+                        button.StyleBorderBaseG,
+                        button.StyleBorderBaseB,
+                        button.StyleBorderBaseA
                 )
             end
         end
@@ -1252,10 +1746,10 @@ function OneBank:SetBagSlotPreview(bagID)
                 button:SetAlpha(button._baseAlpha or 1)
                 if button.StyleBorder then
                     button.StyleBorder:SetBackdropBorderColor(
-                        button.StyleBorderBaseR or 0.34,
-                        button.StyleBorderBaseG or 0.34,
-                        button.StyleBorderBaseB or 0.34,
-                        button.StyleBorderBaseA or 0.95
+                            button.StyleBorderBaseR or 0.34,
+                            button.StyleBorderBaseG or 0.34,
+                            button.StyleBorderBaseB or 0.34,
+                            button.StyleBorderBaseA or 0.95
                     )
                 end
             elseif button.bagID == bagID then
@@ -1267,10 +1761,10 @@ function OneBank:SetBagSlotPreview(bagID)
                 button:SetAlpha(math.max(0.55, (button._baseAlpha or 1) * 0.65))
                 if button.StyleBorder then
                     button.StyleBorder:SetBackdropBorderColor(
-                        button.StyleBorderBaseR or 0.34,
-                        button.StyleBorderBaseG or 0.34,
-                        button.StyleBorderBaseB or 0.34,
-                        math.min(button.StyleBorderBaseA or 0.95, 0.55)
+                            button.StyleBorderBaseR or 0.34,
+                            button.StyleBorderBaseG or 0.34,
+                            button.StyleBorderBaseB or 0.34,
+                            math.min(button.StyleBorderBaseA or 0.95, 0.55)
                     )
                 end
             end
@@ -1317,7 +1811,9 @@ end
 
 function OneBank:AcquireButton(index)
     local btn = self.buttons[index]
-    if btn then return btn end
+    if btn then
+        return btn
+    end
 
     local name = "LunaBagsBankItemButton" .. index
     btn = CreateFrame("ItemButton", name, self.frame.content, "ContainerFrameItemButtonTemplate")
@@ -1382,8 +1878,7 @@ function OneBank:BuildLiveSlots()
                 local itemInfo = GetItemInfoFromBag(bagID, slot)
                 local itemLink = itemInfo and GetItemLinkFromBag(bagID, slot) or nil
                 local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
-                local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
-                    GetItemDetails(itemLink, itemID, includeFullDetails)
+                local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID = GetItemDetails(itemLink, itemID, includeFullDetails)
                 slots[#slots + 1] = {
                     bagID = bagID,
                     slot = slot,
@@ -1410,15 +1905,25 @@ function OneBank:BuildLiveSlots()
     return slots
 end
 
-function OneBank:Refresh()
-    if not self.frame then return end
+function OneBank:Refresh(layoutOnly)
+    if not self.frame then
+        return
+    end
+    layoutOnly = layoutOnly == true
     EnsureVisibleBankBagDefaults(self.visibleBags)
     self:UpdateSearchLayout()
-    self:RefreshBagSlots()
+    if not layoutOnly then
+        self:RefreshBagSlots()
+    end
 
     local searching = self.searchText and self.searchText ~= ""
-    local all = self:BuildLiveSlots()
-    local occupiedSlots, totalSlots = CountSlotUsage(all)
+    local cachedLayout = layoutOnly and self._layoutModel or nil
+    local all = cachedLayout and cachedLayout.all or self:BuildLiveSlots()
+    local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
+    local totalSlots = cachedLayout and cachedLayout.totalSlots or nil
+    if not occupiedSlots or not totalSlots then
+        occupiedSlots, totalSlots = CountSlotUsage(all)
+    end
     local positioned = {}
     local sectionHeaders = {}
     local sectionEmptyLabels = {}
@@ -1430,28 +1935,27 @@ function OneBank:Refresh()
     local gridWidth = cols * size + ((cols - 1) * spacing)
     local gridInsetX = spacing
     local gridInsetY = spacing
-    local framePaddingX = 26
+    local framePaddingX = BANK_FRAME_PADDING_X
     local contentTopInset = self.searchVisible and 34 or 12
     local frameVerticalChrome = 79 + contentTopInset
 
     local desiredContentWidth = gridWidth + (gridInsetX * 2)
-    local frameWidth = desiredContentWidth + framePaddingX
+    local frameWidth = math.max(desiredContentWidth + framePaddingX, tonumber(self.windowWidth) or 0)
     self.frame:SetSize(frameWidth, self.frame:GetHeight())
-    local actualContentWidth = self.frame.content and self.frame.content:GetWidth() or desiredContentWidth
+    local actualContentWidth = self.frame.ScrollFrame and self.frame.ScrollFrame:GetWidth() or (self.frame.content and self.frame.content:GetWidth()) or desiredContentWidth
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
     local categoryConfig = ns.Categories and ns.Categories:GetConfig("bank") or nil
     local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local sectionHeaderHeight = 14
-    local sectionGapY = 8
-    local uncategorized = {}
-    local splitByBag = {}
-    local splitSections = {}
-    local categorySections = {}
+    local sectionGapY = math.max(spacing * 2, spacing + 6)
+    local uncategorized = cachedLayout and cachedLayout.uncategorized or {}
+    local splitSections = cachedLayout and cachedLayout.splitSections or {}
+    local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
 
-    if categoriesEnabled and ns.Categories then
+    if (not cachedLayout) and categoriesEnabled and ns.Categories then
         for index, category in ipairs(ns.Categories:GetList("bank") or {}) do
             if category.enabled ~= false then
                 local key = category.id or category.name or tostring(index)
@@ -1467,161 +1971,208 @@ function OneBank:Refresh()
         end
     end
 
-    for _, entry in ipairs(all) do
-        local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
-        if category then
-            local key = category.id or category.name
-            local section = key and categoryByID[key] or nil
-            if section then
-                section.entries[#section.entries + 1] = entry
+    if not cachedLayout then
+        local splitByBag = {}
+        for _, entry in ipairs(all) do
+            local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
+            if category then
+                local key = category.id or category.name
+                local section = key and categoryByID[key] or nil
+                if section then
+                    section.entries[#section.entries + 1] = entry
+                else
+                    uncategorized[#uncategorized + 1] = entry
+                end
+            elseif IsBankBagSplitEnabled(entry.bagID) then
+                splitByBag[entry.bagID] = splitByBag[entry.bagID] or {}
+                splitByBag[entry.bagID][#splitByBag[entry.bagID] + 1] = entry
             else
                 uncategorized[#uncategorized + 1] = entry
             end
-        elseif IsBankBagSplitEnabled(entry.bagID) then
-            splitByBag[entry.bagID] = splitByBag[entry.bagID] or {}
-            splitByBag[entry.bagID][#splitByBag[entry.bagID] + 1] = entry
-        else
-            uncategorized[#uncategorized + 1] = entry
         end
-    end
-    for index, bagID in ipairs(BANK_BAG_SLOTS) do
-        local entries = splitByBag[bagID]
-        if entries and #entries > 0 then
-            splitSections[#splitSections + 1] = {
-                title = string.format("%s %d", BANK_BAG or "Bank Bag", index),
-                entries = entries,
-            }
+        for index, bagID in ipairs(BANK_BAG_SLOTS) do
+            local entries = splitByBag[bagID]
+            if entries and #entries > 0 then
+                splitSections[#splitSections + 1] = {
+                    title = string.format("%s %d", BANK_BAG or "Bank Bag", index),
+                    entries = entries,
+                }
+            end
         end
+
+        self._layoutModel = {
+            all = all,
+            occupiedSlots = occupiedSlots,
+            totalSlots = totalSlots,
+            uncategorized = uncategorized,
+            splitSections = splitSections,
+            categorySections = categorySections,
+        }
     end
 
-    local currentRow = 0
-    local extraYOffset = 0
-    local hasContent = false
-    local function AddSection(title, entries)
-        if not entries or #entries == 0 then
-            return
+local currentRow = 0
+local extraYOffset = 0
+local hasContent = false
+local function AddSection(title, entries)
+    if not entries or #entries == 0 then
+        return
+    end
+    if hasContent then
+        extraYOffset = extraYOffset + sectionGapY
+    end
+    if title and title ~= "" then
+        sectionHeaders[#sectionHeaders + 1] = {
+            title = title,
+            row = currentRow,
+            yOffset = extraYOffset,
+        }
+        extraYOffset = extraYOffset + sectionHeaderHeight
+    end
+    for idx, entry in ipairs(entries) do
+        local zero = idx - 1
+        positioned[#positioned + 1] = {
+            entry = entry,
+            col = zero % cols,
+            row = currentRow + math.floor(zero / cols),
+            yOffset = extraYOffset,
+        }
+    end
+    local rowsUsed = math.max(1, math.ceil(#entries / cols))
+    currentRow = currentRow + rowsUsed
+    hasContent = true
+end
+
+local function AddCategoryGrid(sections)
+    if #sections == 0 then
+        return
+    end
+    if hasContent then
+        extraYOffset = extraYOffset + sectionGapY
+    end
+
+    local desiredGridGapCols = 2
+    local gridGapCols = 0
+    if categoryColumnCount > 1 then
+        local minColsWithDesiredGap = categoryColumnCount + ((categoryColumnCount - 1) * desiredGridGapCols)
+        if minColsWithDesiredGap <= cols then
+            gridGapCols = desiredGridGapCols
+        elseif (categoryColumnCount * 2 - 1) <= cols then
+            gridGapCols = 1
         end
-        if hasContent then
-            extraYOffset = extraYOffset + sectionGapY
+    end
+    local defaultSectionCols = math.max(1, math.floor((cols - ((categoryColumnCount - 1) * gridGapCols)) / categoryColumnCount))
+    local columnHeights = {}
+    local layouts = {}
+    for col = 0, cols - 1 do
+        columnHeights[col] = 0
+    end
+
+    local function GetSectionCols(section)
+        local category = section and section.category
+        local requested = tonumber(category and category.columns)
+        if requested and requested > 0 then
+            return math.max(1, math.min(cols, math.floor(requested)))
         end
-        if title and title ~= "" then
+        return defaultSectionCols
+    end
+
+    local function FindMasonrySlot(sectionCols)
+        local bestCol = 0
+        local bestHeight
+        for startCol = 0, cols - sectionCols do
+            local height = 0
+            for col = startCol, startCol + sectionCols - 1 do
+                height = math.max(height, columnHeights[col] or 0)
+            end
+            if bestHeight == nil or height < bestHeight then
+                bestHeight = height
+                bestCol = startCol
+            end
+        end
+        return bestCol, bestHeight or 0
+    end
+
+    for _, section in ipairs(sections) do
+        local sectionCols = GetSectionCols(section)
+        local startCol, topOffset = FindMasonrySlot(sectionCols)
+        local entries = section.entries or {}
+        local minSlots = math.max(0, tonumber(section.minSlots) or 0)
+        local visibleSlots = (#entries == 0) and math.max(1, minSlots) or math.max(#entries, minSlots)
+        local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
+        local headerHeight = (section.title and section.title ~= "") and sectionHeaderHeight or 0
+        local sectionHeight = headerHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
+        if topOffset > 0 then
+            topOffset = topOffset + sectionGapY
+        end
+        for col = startCol, startCol + sectionCols - 1 do
+            columnHeights[col] = topOffset + sectionHeight
+        end
+        layouts[#layouts + 1] = {
+            section = section,
+            startCol = startCol,
+            topOffset = topOffset,
+            sectionCols = sectionCols,
+            entries = entries,
+            visibleSlots = visibleSlots,
+        }
+    end
+
+    for _, layout in ipairs(layouts) do
+        local section = layout.section
+        local entries = layout.entries
+        local startCol = layout.startCol
+        local visibleSlots = layout.visibleSlots
+        local sectionCols = layout.sectionCols
+        local startRow = currentRow
+        local headerOffset = extraYOffset + (layout.topOffset or 0)
+
+        if section.title and section.title ~= "" then
             sectionHeaders[#sectionHeaders + 1] = {
-                title = title,
-                row = currentRow,
-                yOffset = extraYOffset,
+                title = section.title,
+                row = startRow,
+                yOffset = headerOffset,
+                col = startCol,
+                cols = sectionCols,
             }
-            extraYOffset = extraYOffset + sectionHeaderHeight
+            headerOffset = headerOffset + sectionHeaderHeight
         end
+
         for idx, entry in ipairs(entries) do
             local zero = idx - 1
             positioned[#positioned + 1] = {
                 entry = entry,
-                col = zero % cols,
-                row = currentRow + math.floor(zero / cols),
-                yOffset = extraYOffset,
+                col = startCol + (zero % sectionCols),
+                row = startRow + math.floor(zero / sectionCols),
+                yOffset = headerOffset,
             }
         end
-        local rowsUsed = math.max(1, math.ceil(#entries / cols))
-        currentRow = currentRow + rowsUsed
-        hasContent = true
-    end
-
-    local function AddCategoryGrid(sections)
-        if #sections == 0 then
-            return
-        end
-        if hasContent then
-            extraYOffset = extraYOffset + sectionGapY
-        end
-
-        local gridGapCols = (categoryColumnCount > 1 and ((categoryColumnCount * 2 - 1) <= cols)) and 1 or 0
-        local sectionCols = math.max(1, math.floor((cols - ((categoryColumnCount - 1) * gridGapCols)) / categoryColumnCount))
-        local rowHeights = {}
-        local layouts = {}
-
-        for index, section in ipairs(sections) do
-            local gridCol = (index - 1) % categoryColumnCount
-            local gridRow = math.floor((index - 1) / categoryColumnCount)
-            local startCol = gridCol * (sectionCols + gridGapCols)
-            local entries = section.entries or {}
-            local minSlots = math.max(0, tonumber(section.minSlots) or 0)
-            local visibleSlots = (#entries == 0) and math.max(1, minSlots) or math.max(#entries, minSlots)
-            local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
-            local sectionHeight = sectionHeaderHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
-            rowHeights[gridRow] = math.max(rowHeights[gridRow] or 0, sectionHeight)
-            layouts[#layouts + 1] = {
-                section = section,
-                gridRow = gridRow,
-                startCol = startCol,
-                entries = entries,
-                visibleSlots = visibleSlots,
+        for idx = #entries + 1, visibleSlots do
+            local zero = idx - 1
+            sectionPlaceholders[#sectionPlaceholders + 1] = {
+                col = startCol + (zero % sectionCols),
+                row = startRow + math.floor(zero / sectionCols),
+                yOffset = headerOffset,
+                category = section.category,
             }
         end
-
-        for _, layout in ipairs(layouts) do
-            local priorOffset = 0
-            for row = 0, layout.gridRow - 1 do
-                priorOffset = priorOffset + (rowHeights[row] or 0) + sectionGapY
-            end
-
-            local section = layout.section
-            local entries = layout.entries
-            local startCol = layout.startCol
-            local visibleSlots = layout.visibleSlots
-            local startRow = currentRow
-            local headerOffset = extraYOffset + priorOffset
-
-            if section.title and section.title ~= "" then
-                sectionHeaders[#sectionHeaders + 1] = {
-                    title = section.title,
-                    row = startRow,
-                    yOffset = headerOffset,
-                    col = startCol,
-                    cols = sectionCols,
-                }
-                headerOffset = headerOffset + sectionHeaderHeight
-            end
-
-            for idx, entry in ipairs(entries) do
-                local zero = idx - 1
-                positioned[#positioned + 1] = {
-                    entry = entry,
-                    col = startCol + (zero % sectionCols),
-                    row = startRow + math.floor(zero / sectionCols),
-                    yOffset = headerOffset,
-                }
-            end
-            for idx = #entries + 1, visibleSlots do
-                local zero = idx - 1
-                sectionPlaceholders[#sectionPlaceholders + 1] = {
-                    col = startCol + (zero % sectionCols),
-                    row = startRow + math.floor(zero / sectionCols),
-                    yOffset = headerOffset,
-                }
-            end
-            if #entries == 0 then
-                sectionEmptyLabels[#sectionEmptyLabels + 1] = {
-                    text = "No items found",
-                    row = startRow,
-                    yOffset = headerOffset,
-                    col = startCol,
-                    cols = sectionCols,
-                }
-            end
+        if #entries == 0 then
+            sectionEmptyLabels[#sectionEmptyLabels + 1] = {
+                text = "No items found",
+                row = startRow,
+                yOffset = headerOffset,
+                col = startCol,
+                cols = sectionCols,
+            }
         end
-
-        local totalHeight = 0
-        local rowIndex = 0
-        while rowHeights[rowIndex] do
-            if rowIndex > 0 then
-                totalHeight = totalHeight + sectionGapY
-            end
-            totalHeight = totalHeight + rowHeights[rowIndex]
-            rowIndex = rowIndex + 1
-        end
-        extraYOffset = extraYOffset + math.max(sectionHeaderHeight + size, totalHeight)
-        hasContent = true
     end
+
+    local totalHeight = 0
+    for col = 0, cols - 1 do
+        totalHeight = math.max(totalHeight, columnHeights[col] or 0)
+    end
+    extraYOffset = extraYOffset + math.max(sectionHeaderHeight + size, totalHeight)
+    hasContent = true
+end
 
     if categoriesEnabled then
         AddSection("Uncategorized", uncategorized)
@@ -1641,7 +2192,7 @@ function OneBank:Refresh()
     for i = 1, used do
         local b = self:AcquireButton(i)
         b:SetSize(size, size)
-        if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+        if (not layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
             ns.ItemButtonStyle.Apply(b)
         end
         local pos = positioned[i]
@@ -1654,50 +2205,81 @@ function OneBank:Refresh()
         end
         b:ClearAllPoints()
         b:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + col * (size + spacing), -gridInsetY - row * (size + spacing) - (pos.yOffset or 0))
-        local isMatch = ItemMatchesSearch(info.item, self.searchText)
-        b.bagID = info.bagID
-        b.slot = info.slot
-        b.BagID = info.bagID
-        b.SlotID = info.slot
-        b.itemData = info.item
-        b:SetID(info.slot)
-        b:SetAttribute("type", "item")
-        b:SetAttribute("bag", info.bagID)
-        b:SetAttribute("slot", info.slot)
-        if b.DebugSlotText and IsDebugEnabled() then
-            b.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
-            b.DebugSlotText:Show()
-        elseif b.DebugSlotText then
-            b.DebugSlotText:Hide()
-        end
-
-        if info.item then
-            if SetItemButtonTexture then SetItemButtonTexture(b, info.item.iconFileID) else b.icon:SetTexture(info.item.iconFileID) end
-            if SetItemButtonCount then SetItemButtonCount(b, info.item.stackCount or 0) else b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "") end
-            if SetItemButtonQuality then SetItemButtonQuality(b, info.item.quality, info.item.itemLink) end
-            UpdateItemCooldown(b, info.bagID, info.slot)
-            local alpha = (searching and not isMatch) and 0.22 or 1
-            b:SetAlpha(alpha)
-            b._baseAlpha = alpha
-            UpdateButtonStyleBorderForItem(b, info.item)
-        else
-            if SetItemButtonTexture then SetItemButtonTexture(b, nil) else b.icon:SetTexture(nil) end
-            if SetItemButtonCount then SetItemButtonCount(b, 0) else b.count:SetText("") end
-            if SetItemButtonQuality then SetItemButtonQuality(b, nil) end
-            ClearItemCooldown(b)
-            local alpha = (searching and not isMatch) and 0.18 or 0.55
-            b:SetAlpha(alpha)
-            b._baseAlpha = alpha
-            UpdateButtonStyleBorderForItem(b, nil)
-        end
-        if b.icon and b.icon.SetDesaturated then
-            b.icon:SetDesaturated(self.sortingActive == true)
-        end
-        if ns.Plugins then ns.Plugins:Apply(b, info, "oneBank") end
-        b:EnableMouse(not self.sortingActive)
-        b:Show()
         local bottom = gridInsetY + row * (size + spacing) + (pos.yOffset or 0) + size
-        if bottom > maxBottom then maxBottom = bottom end
+        if bottom > maxBottom then
+            maxBottom = bottom
+        end
+        if layoutOnly then
+            if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
+                ns.ItemButtonStyle.ResetState(b)
+            end
+            b:Show()
+        else
+            local isMatch = ItemMatchesSearch(info.item, self.searchText)
+            b.bagID = info.bagID
+            b.slot = info.slot
+            b.BagID = info.bagID
+            b.SlotID = info.slot
+            b.itemData = info.item
+            b:SetID(info.slot)
+            b:SetAttribute("type", "item")
+            b:SetAttribute("bag", info.bagID)
+            b:SetAttribute("slot", info.slot)
+            if b.DebugSlotText and IsDebugEnabled() then
+                b.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
+                b.DebugSlotText:Show()
+            elseif b.DebugSlotText then
+                b.DebugSlotText:Hide()
+            end
+
+            if info.item then
+                if SetItemButtonTexture then
+                    SetItemButtonTexture(b, info.item.iconFileID)
+                else
+                    b.icon:SetTexture(info.item.iconFileID)
+                end
+                if SetItemButtonCount then
+                    SetItemButtonCount(b, info.item.stackCount or 0)
+                else
+                    b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
+                end
+                if SetItemButtonQuality then
+                    SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
+                end
+                UpdateItemCooldown(b, info.bagID, info.slot)
+                local alpha = (searching and not isMatch) and 0.22 or 1
+                b:SetAlpha(alpha)
+                b._baseAlpha = alpha
+                UpdateButtonStyleBorderForItem(b, info.item)
+            else
+                if SetItemButtonTexture then
+                    SetItemButtonTexture(b, nil)
+                else
+                    b.icon:SetTexture(nil)
+                end
+                if SetItemButtonCount then
+                    SetItemButtonCount(b, 0)
+                else
+                    b.count:SetText("")
+                end
+                if SetItemButtonQuality then
+                    SetItemButtonQuality(b, nil)
+                end
+                ClearItemCooldown(b)
+                local alpha = (searching and not isMatch) and 0.18 or 0.55
+                b:SetAlpha(alpha)
+                b._baseAlpha = alpha
+                UpdateButtonStyleBorderForItem(b, nil)
+            end
+            if b.icon and b.icon.SetDesaturated then
+                b.icon:SetDesaturated(self.sortingActive == true)
+            end
+            if ns.Plugins then
+                ns.Plugins:Apply(b, info, "oneBank")
+            end
+            b:EnableMouse(not self.sortingActive)
+            b:Show()
+        end
     end
     for i = used + 1, #self.buttons do
         if self.buttons[i].DebugSlotText then
@@ -1712,11 +2294,15 @@ function OneBank:Refresh()
         frame:SetSize(size, size)
         frame:ClearAllPoints()
         frame:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (placeholder.col or 0) * (size + spacing), -gridInsetY - (placeholder.row or 0) * (size + spacing) - (placeholder.yOffset or 0))
+        ConfigureCategoryPlaceholder(frame, self, placeholder.category)
         frame:Show()
         local bottom = gridInsetY + (placeholder.row or 0) * (size + spacing) + (placeholder.yOffset or 0) + size
-        if bottom > maxBottom then maxBottom = bottom end
+        if bottom > maxBottom then
+            maxBottom = bottom
+        end
     end
     for i = #sectionPlaceholders + 1, #placeholders do
+        ConfigureCategoryPlaceholder(placeholders[i], self, nil)
         placeholders[i]:Hide()
     end
 
@@ -1761,16 +2347,22 @@ function OneBank:Refresh()
         fs:SetPoint("TOPLEFT", categoryOverlay, "TOPLEFT", gridInsetX + (label.col or 0) * (size + spacing), -gridInsetY - (label.row or 0) * (size + spacing) - (label.yOffset or 0))
         fs:Show()
         local bottom = gridInsetY + (label.row or 0) * (size + spacing) + (label.yOffset or 0) + size
-        if bottom > maxBottom then maxBottom = bottom end
+        if bottom > maxBottom then
+            maxBottom = bottom
+        end
     end
     for i = #sectionEmptyLabels + 1, #(self.sectionEmptyLabels or {}) do
         self.sectionEmptyLabels[i]:Hide()
     end
 
-    if maxBottom <= 0 then maxBottom = gridInsetY + size end
+    if maxBottom <= 0 then
+        maxBottom = gridInsetY + size
+    end
     local contentHeight = maxBottom + gridInsetY
-    local frameHeight = math.max(260, contentHeight + frameVerticalChrome)
+    local naturalFrameHeight = contentHeight + frameVerticalChrome
+    local frameHeight = math.max(260, math.min(tonumber(self.maxHeight) or BANK_DEFAULT_MAX_HEIGHT, naturalFrameHeight))
     self.frame:SetSize(frameWidth, frameHeight)
+    self:UpdateScrollFrame(contentHeight, math.max(1, frameHeight - frameVerticalChrome))
 
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
         if self.frame.MoneyBar.Label then
@@ -1790,26 +2382,122 @@ end
 
 function OneBank:SavePosition()
     local cfg = GetConfig()
-    if not cfg or not self.frame then return end
+    if not cfg or not self.frame then
+        return
+    end
     local point, _, _, x, y = self.frame:GetPoint(1)
     cfg.point = point or "BOTTOMLEFT"
     cfg.x = x or 34
     cfg.y = y or 126
 end
 
+function OneBank:SaveWindowWidth(width)
+    local cfg = GetConfig()
+    if not cfg then
+        return
+    end
+    width = math.max(320, math.min(1100, math.floor((tonumber(width) or self.windowWidth or 590) + 0.5)))
+    cfg.windowWidth = width
+    cfg._windowWidthMigrated = true
+    self.windowWidth = width
+end
+
+function OneBank:StartResize(side)
+    if not self.frame or self._resizing then
+        return
+    end
+    self._resizing = true
+    self._resizeSide = (side == "left") and "left" or "right"
+    self._resizeLeft = self.frame:GetLeft() or 0
+    self._resizeRight = self.frame:GetRight() or (self._resizeLeft + (self.frame:GetWidth() or self.windowWidth or 0))
+    self._resizeBottom = self.frame:GetBottom() or 0
+    self.frame:ClearAllPoints()
+    if self._resizeSide == "left" then
+        self.frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", self._resizeRight, self._resizeBottom)
+    else
+        self.frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", self._resizeLeft, self._resizeBottom)
+    end
+    self:SavePosition()
+
+    local grip = (self._resizeSide == "left") and self.frame.LeftResizeGrip or self.frame.ResizeGrip
+    if grip then
+        grip:SetScript("OnUpdate", function()
+            if not IsMouseButtonDown("LeftButton") then
+                OneBank:StopResize()
+                return
+            end
+            local cursorX = GetCursorPosition()
+            local scale = UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+            local scaledCursorX = cursorX / scale
+            local rawWidth
+            if OneBank._resizeSide == "left" then
+                rawWidth = (OneBank._resizeRight or scaledCursorX) - scaledCursorX
+            else
+                rawWidth = scaledCursorX - (OneBank._resizeLeft or 0)
+            end
+            local width = math.max(320, math.min(1100, math.floor(rawWidth + 0.5)))
+            if width ~= OneBank.windowWidth then
+                OneBank.windowWidth = width
+                if OneBank.frame.SetWidth then
+                    OneBank.frame:SetWidth(width)
+                else
+                    OneBank.frame:SetSize(width, OneBank.frame:GetHeight())
+                end
+                local newColumns = CalculateColumnsFromWindowWidth(OneBank.windowWidth, OneBank.slotSize, OneBank.spacing)
+                if newColumns ~= OneBank.columns then
+                    OneBank.columns = newColumns
+                    OneBank:Refresh(true)
+                else
+                    OneBank:UpdateScrollFrame(OneBank._scrollContentHeight or 1, OneBank._scrollViewportHeight or 1)
+                end
+            end
+        end)
+    end
+end
+
+function OneBank:StopResize()
+    if not self._resizing then
+        return
+    end
+    self._resizing = false
+    if self.frame and self.frame.ResizeGrip then
+        self.frame.ResizeGrip:SetScript("OnUpdate", nil)
+    end
+    if self.frame and self.frame.LeftResizeGrip then
+        self.frame.LeftResizeGrip:SetScript("OnUpdate", nil)
+    end
+    self._resizeSide = nil
+    self:SaveWindowWidth(self.windowWidth)
+    self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
+    self:Refresh()
+    self:SavePosition()
+    NotifyOptionsChanged()
+end
+
 function OneBank:SaveVisibleBagsState()
     local cfg = GetConfig()
-    if not cfg then return end
+    if not cfg then
+        return
+    end
     local perChar = cfg._activeCharacterData or {}
     perChar.visibleBags = CopyVisibleBankBagsState(self.visibleBags)
 end
 
 function OneBank:ApplySettings()
     local cfg = GetConfig()
-    if not cfg or not self.frame then return end
-    self.columns = math.max(6, math.min(16, tonumber(cfg.columns) or 14))
+    if not cfg or not self.frame then
+        return
+    end
     self.slotSize = math.max(24, math.min(48, tonumber(cfg.itemSize) or 36))
     self.spacing = math.max(0, math.min(12, tonumber(cfg.spacing) or 4))
+    if cfg._windowWidthMigrated ~= true then
+        cfg.windowWidth = CalculateWindowWidthFromColumns(tonumber(cfg.columns) or 14, self.slotSize, self.spacing)
+        cfg._windowWidthMigrated = true
+    end
+    local fallbackWidth = CalculateWindowWidthFromColumns(tonumber(cfg.columns) or 14, self.slotSize, self.spacing)
+    self.windowWidth = math.max(260, math.min(1400, tonumber(cfg.windowWidth) or fallbackWidth))
+    self.maxHeight = math.max(260, math.min(1200, tonumber(cfg.windowMaxHeight) or BANK_DEFAULT_MAX_HEIGHT))
+    self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
     self.showBagRail = cfg.showBagRail ~= false
     local perChar = cfg._activeCharacterData or {}
     self.visibleBags = CopyVisibleBankBagsState(perChar.visibleBags or cfg.visibleBags)
@@ -1822,6 +2510,14 @@ function OneBank:ApplySettings()
         self.frame.HeaderDrag:EnableMouse(not cfg.locked)
         self.frame.HeaderDrag:SetShown(not cfg.locked)
     end
+    if self.frame.ResizeGrip then
+        self.frame.ResizeGrip:EnableMouse(not cfg.locked)
+        self.frame.ResizeGrip:SetAlpha(cfg.locked and 0.25 or 1)
+    end
+    if self.frame.LeftResizeGrip then
+        self.frame.LeftResizeGrip:EnableMouse(not cfg.locked)
+        self.frame.LeftResizeGrip:SetAlpha(cfg.locked and 0.25 or 1)
+    end
     ApplyWindowAppearance(self.frame, cfg)
     if self.frame.RailToggleButton then
         self.frame.RailToggleButton:SetAlpha(self.showBagRail and 1 or 0.6)
@@ -1831,7 +2527,9 @@ end
 
 function OneBank:ResetPosition()
     local cfg = GetConfig()
-    if not cfg then return end
+    if not cfg then
+        return
+    end
     cfg.point = "BOTTOMLEFT"
     cfg.x = 34
     cfg.y = 126
@@ -1851,7 +2549,9 @@ function OneBank:Show()
 end
 
 function OneBank:Hide()
-    if self.frame then self.frame:Hide() end
+    if self.frame then
+        self.frame:Hide()
+    end
 end
 
 function LunaBagsOneBank_Close()
@@ -1859,7 +2559,9 @@ function LunaBagsOneBank_Close()
         CloseBankFrame()
         return
     end
-    if ns.OneBank then ns.OneBank:Hide() end
+    if ns.OneBank then
+        ns.OneBank:Hide()
+    end
 end
 
 function LunaBagsOneBank_SearchChanged(editBox)
@@ -1908,13 +2610,17 @@ function LunaBagsOneBank_SortButtonClicked(_, mouseButton)
         local menu = {
             {
                 text = "Sort Bank",
-                func = function() LunaBagsOneBank_SortClicked() end,
+                func = function()
+                    LunaBagsOneBank_SortClicked()
+                end,
                 notCheckable = true,
             },
             {
                 text = SETTINGS or "Settings",
                 func = function()
-                    if ns.OpenConfig then ns.OpenConfig() end
+                    if ns.OpenConfig then
+                        ns.OpenConfig()
+                    end
                 end,
                 notCheckable = true,
             },
@@ -1929,7 +2635,9 @@ function LunaBagsOneBank_SortButtonClicked(_, mouseButton)
                 CreateFrame("Frame", "LunaBagsOneBankSortMenu", UIParent, "UIDropDownMenuTemplate")
             end
             UIDropDownMenu_Initialize(LunaBagsOneBankSortMenu, function(_, level)
-                if level ~= 1 then return end
+                if level ~= 1 then
+                    return
+                end
                 for _, entry in ipairs(menu) do
                     local info = UIDropDownMenu_CreateInfo()
                     info.text = entry.text

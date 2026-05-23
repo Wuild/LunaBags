@@ -30,10 +30,29 @@ local function RefreshOneBank()
         end
     end
 end
+local function RefreshOneGuildBank()
+    if ns.OneGuildBank then
+        ns.OneGuildBank:ApplySettings()
+        if ns.OneGuildBank.frame and ns.OneGuildBank.frame:IsShown() then
+            ns.OneGuildBank:Refresh()
+        end
+    end
+end
+
+local function CalculateWindowWidthFromColumns(columns, itemSize, spacing)
+    columns = math.max(1, math.floor(tonumber(columns) or 1))
+    itemSize = tonumber(itemSize) or 36
+    spacing = tonumber(spacing) or 4
+    return columns * itemSize + math.max(0, columns - 1) * spacing + (spacing * 2) + 26
+end
 
 local function GetOneBagSetting(key, fallback)
     LunaBags.db.profile.oneBag = LunaBags.db.profile.oneBag or {}
-    local value = LunaBags.db.profile.oneBag[key]
+    local cfg = LunaBags.db.profile.oneBag
+    if key == "windowWidth" and rawget(cfg, "windowWidth") == nil and cfg._windowWidthMigrated ~= true then
+        return CalculateWindowWidthFromColumns(cfg.columns or 11, cfg.itemSize or 37, cfg.spacing or 4)
+    end
+    local value = cfg[key]
     if value == nil then
         return fallback
     end
@@ -48,7 +67,11 @@ end
 
 local function GetOneBankSetting(key, fallback)
     LunaBags.db.profile.oneBank = LunaBags.db.profile.oneBank or {}
-    local value = LunaBags.db.profile.oneBank[key]
+    local cfg = LunaBags.db.profile.oneBank
+    if key == "windowWidth" and rawget(cfg, "windowWidth") == nil and cfg._windowWidthMigrated ~= true then
+        return CalculateWindowWidthFromColumns(cfg.columns or 14, cfg.itemSize or 36, cfg.spacing or 4)
+    end
+    local value = cfg[key]
     if value == nil then
         return fallback
     end
@@ -58,6 +81,21 @@ local function SetOneBankSetting(key, value)
     LunaBags.db.profile.oneBank = LunaBags.db.profile.oneBank or {}
     LunaBags.db.profile.oneBank[key] = value
     RefreshOneBank()
+end
+
+local function GetOneGuildBankSetting(key, fallback)
+    LunaBags.db.profile.oneGuildBank = LunaBags.db.profile.oneGuildBank or {}
+    local value = LunaBags.db.profile.oneGuildBank[key]
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
+local function SetOneGuildBankSetting(key, value)
+    LunaBags.db.profile.oneGuildBank = LunaBags.db.profile.oneGuildBank or {}
+    LunaBags.db.profile.oneGuildBank[key] = value
+    RefreshOneGuildBank()
 end
 
 local function GetUISetting(key, fallback)
@@ -74,6 +112,7 @@ local function SetUISetting(key, value)
     LunaBags.db.profile.ui[key] = value
     RefreshOneBag(true)
     RefreshOneBank()
+    RefreshOneGuildBank()
 end
 
 local function GetUIColorSetting(key, r, g, b)
@@ -100,6 +139,7 @@ local function ResetUIColorAndOpacitySettings()
     LunaBags.db.profile.ui.itemFrameOpacity = 0.92
     RefreshOneBag(true)
     RefreshOneBank()
+    RefreshOneGuildBank()
 end
 
 local function GetPluginSetting(key, fallback)
@@ -116,6 +156,7 @@ local function SetPluginSetting(key, value)
     LunaBags.db.profile.plugins[key] = value
     RefreshOneBag()
     RefreshOneBank()
+    RefreshOneGuildBank()
 end
 
 local function GetSortingSetting(key, fallback)
@@ -531,7 +572,7 @@ local function BuildCategoryOptions()
         categoryColumns = {
             type = "range",
             name = "Category Columns",
-            desc = "How many category sections to place side by side in the bag window.",
+            desc = "Default number of category sections to fit side by side. Individual categories can override their item column width.",
             order = 4,
             min = 1,
             max = 4,
@@ -592,10 +633,25 @@ local function BuildCategoryOptions()
                                 RefreshCategories()
                             end,
                         },
+                        columns = {
+                            type = "range",
+                            name = "Section Columns",
+                            desc = "How many item columns this category should use. Set to 0 to use the default category width.",
+                            order = 4,
+                            min = 0,
+                            max = 32,
+                            step = 1,
+                            get = function() return category.columns or 0 end,
+                            set = function(_, value)
+                                local columns = tonumber(value) or 0
+                                category.columns = columns > 0 and columns or nil
+                                RefreshCategories()
+                            end,
+                        },
                         moveUp = {
                             type = "execute",
                             name = "Move Up",
-                            order = 4,
+                            order = 5,
                             disabled = function() return index <= 1 end,
                             func = function()
                                 if ns.Categories and ns.Categories:MoveCategory(index, -1, selectedCategoryScope) then
@@ -606,7 +662,7 @@ local function BuildCategoryOptions()
                         moveDown = {
                             type = "execute",
                             name = "Move Down",
-                            order = 5,
+                            order = 6,
                             disabled = function() return index >= #(cfg.list or {}) end,
                             func = function()
                                 if ns.Categories and ns.Categories:MoveCategory(index, 1, selectedCategoryScope) then
@@ -870,15 +926,15 @@ end
 
 local function BuildBagOptions()
     return {
-        columns = {
+        windowWidth = {
             type = "range",
-            name = "Columns",
+            name = "Window Width",
             order = 1,
-            min = 6,
-            max = 16,
+            min = 280,
+            max = 900,
             step = 1,
-            get = function() return GetOneBagSetting("columns", 11) end,
-            set = function(_, value) SetOneBagSetting("columns", value) end,
+            get = function() return GetOneBagSetting("windowWidth", 481) end,
+            set = function(_, value) SetOneBagSetting("windowWidth", value) end,
         },
         itemSize = {
             type = "range",
@@ -887,13 +943,23 @@ local function BuildBagOptions()
             min = 24,
             max = 48,
             step = 1,
-            get = function() return GetOneBagSetting("itemSize", 36) end,
+            get = function() return GetOneBagSetting("itemSize", 37) end,
             set = function(_, value) SetOneBagSetting("itemSize", value) end,
+        },
+        windowMaxHeight = {
+            type = "range",
+            name = "Max Height",
+            order = 3,
+            min = 260,
+            max = 1000,
+            step = 1,
+            get = function() return GetOneBagSetting("windowMaxHeight", 650) end,
+            set = function(_, value) SetOneBagSetting("windowMaxHeight", value) end,
         },
         spacing = {
             type = "range",
             name = "Item Spacing",
-            order = 3,
+            order = 4,
             min = 0,
             max = 12,
             step = 1,
@@ -903,14 +969,14 @@ local function BuildBagOptions()
         splitByBagRows = {
             type = "toggle",
             name = "Split Rows By Bag",
-            order = 4,
+            order = 5,
             get = function() return GetOneBagSetting("splitByBagRows", false) end,
             set = function(_, value) SetOneBagSetting("splitByBagRows", value) end,
         },
         scale = {
             type = "range",
             name = "Frame Scale",
-            order = 5,
+            order = 6,
             min = 0.7,
             max = 1.5,
             step = 0.01,
@@ -922,14 +988,14 @@ local function BuildBagOptions()
         locked = {
             type = "toggle",
             name = "Lock Frame Position",
-            order = 6,
+            order = 7,
             get = function() return GetOneBagSetting("locked", false) end,
             set = function(_, value) SetOneBagSetting("locked", value) end,
         },
         resetPosition = {
             type = "execute",
             name = "Reset Position",
-            order = 7,
+            order = 8,
             func = function()
                 if ns.OneBag then
                     ns.OneBag:ResetPosition()
@@ -941,15 +1007,15 @@ end
 
 local function BuildBankOptions()
     return {
-        bankColumns = {
+        bankWindowWidth = {
             type = "range",
-            name = "Columns",
+            name = "Window Width",
             order = 1,
-            min = 6,
-            max = 16,
+            min = 320,
+            max = 1100,
             step = 1,
-            get = function() return GetOneBankSetting("columns", 14) end,
-            set = function(_, value) SetOneBankSetting("columns", value) end,
+            get = function() return GetOneBankSetting("windowWidth", 590) end,
+            set = function(_, value) SetOneBankSetting("windowWidth", value) end,
         },
         bankItemSize = {
             type = "range",
@@ -961,10 +1027,20 @@ local function BuildBankOptions()
             get = function() return GetOneBankSetting("itemSize", 36) end,
             set = function(_, value) SetOneBankSetting("itemSize", value) end,
         },
+        bankWindowMaxHeight = {
+            type = "range",
+            name = "Max Height",
+            order = 3,
+            min = 300,
+            max = 1000,
+            step = 1,
+            get = function() return GetOneBankSetting("windowMaxHeight", 650) end,
+            set = function(_, value) SetOneBankSetting("windowMaxHeight", value) end,
+        },
         bankSpacing = {
             type = "range",
             name = "Item Spacing",
-            order = 3,
+            order = 4,
             min = 0,
             max = 12,
             step = 1,
@@ -974,7 +1050,7 @@ local function BuildBankOptions()
         bankScale = {
             type = "range",
             name = "Frame Scale",
-            order = 4,
+            order = 5,
             min = 0.7,
             max = 1.5,
             step = 0.01,
@@ -986,17 +1062,81 @@ local function BuildBankOptions()
         bankLocked = {
             type = "toggle",
             name = "Lock Frame Position",
-            order = 5,
+            order = 6,
             get = function() return GetOneBankSetting("locked", false) end,
             set = function(_, value) SetOneBankSetting("locked", value) end,
         },
         bankResetPosition = {
             type = "execute",
             name = "Reset Position",
-            order = 6,
+            order = 7,
             func = function()
                 if ns.OneBank then
                     ns.OneBank:ResetPosition()
+                end
+            end,
+        },
+    }
+end
+
+local function BuildGuildBankOptions()
+    return {
+        guildBankColumns = {
+            type = "range",
+            name = "Columns",
+            order = 1,
+            min = 6,
+            max = 16,
+            step = 1,
+            get = function() return GetOneGuildBankSetting("columns", 14) end,
+            set = function(_, value) SetOneGuildBankSetting("columns", value) end,
+        },
+        guildBankItemSize = {
+            type = "range",
+            name = "Item Size",
+            order = 2,
+            min = 24,
+            max = 48,
+            step = 1,
+            get = function() return GetOneGuildBankSetting("itemSize", 36) end,
+            set = function(_, value) SetOneGuildBankSetting("itemSize", value) end,
+        },
+        guildBankSpacing = {
+            type = "range",
+            name = "Item Spacing",
+            order = 3,
+            min = 0,
+            max = 12,
+            step = 1,
+            get = function() return GetOneGuildBankSetting("spacing", 4) end,
+            set = function(_, value) SetOneGuildBankSetting("spacing", value) end,
+        },
+        guildBankScale = {
+            type = "range",
+            name = "Frame Scale",
+            order = 4,
+            min = 0.7,
+            max = 1.5,
+            step = 0.01,
+            bigStep = 0.05,
+            isPercent = true,
+            get = function() return GetOneGuildBankSetting("scale", 1) end,
+            set = function(_, value) SetOneGuildBankSetting("scale", value) end,
+        },
+        guildBankLocked = {
+            type = "toggle",
+            name = "Lock Frame Position",
+            order = 5,
+            get = function() return GetOneGuildBankSetting("locked", false) end,
+            set = function(_, value) SetOneGuildBankSetting("locked", value) end,
+        },
+        guildBankResetPosition = {
+            type = "execute",
+            name = "Reset Position",
+            order = 6,
+            func = function()
+                if ns.OneGuildBank then
+                    ns.OneGuildBank:ResetPosition()
                 end
             end,
         },
@@ -1196,6 +1336,12 @@ options = {
                     name = "Bank",
                     order = 3,
                     args = BuildBankOptions(),
+                },
+                guildBank = {
+                    type = "group",
+                    name = "Guild Bank",
+                    order = 4,
+                    args = BuildGuildBankOptions(),
                 },
             },
         },

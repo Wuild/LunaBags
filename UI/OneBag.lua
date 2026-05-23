@@ -26,6 +26,24 @@ ns.OneBag = OneBag
 
 local BAG_FRAME_STRATA = "DIALOG"
 local BAG_FRAME_LEVEL = 40
+local BAG_FRAME_PADDING_X = 26
+local BAG_DEFAULT_MAX_HEIGHT = 650
+
+local function CalculateWindowWidthFromColumns(columns, slotSize, spacing)
+    columns = math.max(1, math.floor(tonumber(columns) or 1))
+    slotSize = tonumber(slotSize) or 36
+    spacing = tonumber(spacing) or 4
+    local gridWidth = columns * slotSize + math.max(0, columns - 1) * spacing
+    return gridWidth + (spacing * 2) + BAG_FRAME_PADDING_X
+end
+
+local function CalculateColumnsFromWindowWidth(windowWidth, slotSize, spacing)
+    windowWidth = tonumber(windowWidth) or CalculateWindowWidthFromColumns(11, slotSize, spacing)
+    slotSize = tonumber(slotSize) or 36
+    spacing = tonumber(spacing) or 4
+    local gridSpace = math.max(slotSize, windowWidth - BAG_FRAME_PADDING_X - (spacing * 2))
+    return math.max(1, math.floor((gridSpace + spacing) / (slotSize + spacing)))
+end
 
 local function EnsureStackSplitFrameAboveBags()
     local splitFrame = _G.StackSplitFrame
@@ -75,6 +93,236 @@ local function ApplyBagFrameLayering(frame)
     if frame.CharacterButton then
         frame.CharacterButton:SetFrameLevel(BAG_FRAME_LEVEL + 15)
     end
+    if frame.ResizeGrip then
+        frame.ResizeGrip:SetFrameLevel(BAG_FRAME_LEVEL + 18)
+    end
+    if frame.LeftResizeGrip then
+        frame.LeftResizeGrip:SetFrameLevel(BAG_FRAME_LEVEL + 18)
+    end
+end
+
+local function NotifyOptionsChanged()
+    if not LibStub then
+        return
+    end
+    local registry = LibStub("AceConfigRegistry-3.0", true)
+    if registry then
+        registry:NotifyChange("LunaBags")
+    end
+end
+
+local function EnsureResizeGrip(owner, frame)
+    if not frame.ResizeGrip then
+        local grip = CreateFrame("Button", nil, frame)
+        grip:SetSize(16, 16)
+        grip:SetNormalTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Up")
+        grip:SetHighlightTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Highlight")
+        grip:SetPushedTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Down")
+        grip:EnableMouse(true)
+        grip:SetScript("OnMouseDown", function(_, button)
+            if button == "LeftButton" then
+                owner:StartResize("right")
+            end
+        end)
+        grip:SetScript("OnMouseUp", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnHide", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Resize")
+            GameTooltip:Show()
+        end)
+        grip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        frame.ResizeGrip = grip
+    end
+    frame.ResizeGrip:ClearAllPoints()
+    frame.ResizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    frame.ResizeGrip:SetFrameLevel(BAG_FRAME_LEVEL + 18)
+
+    if not frame.LeftResizeGrip then
+        local grip = CreateFrame("Button", nil, frame)
+        grip:SetSize(16, 16)
+        grip:SetNormalTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Up")
+        grip:SetHighlightTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Highlight")
+        grip:SetPushedTexture("Interface\\CHATFRAME\\UI-ChatIM-SizeGrabber-Down")
+        grip:EnableMouse(true)
+        grip:SetScript("OnMouseDown", function(_, button)
+            if button == "LeftButton" then
+                owner:StartResize("left")
+            end
+        end)
+        grip:SetScript("OnMouseUp", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnHide", function()
+            owner:StopResize()
+        end)
+        grip:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Resize")
+            GameTooltip:Show()
+        end)
+        grip:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        frame.LeftResizeGrip = grip
+    end
+    local normal = frame.LeftResizeGrip.GetNormalTexture and frame.LeftResizeGrip:GetNormalTexture()
+    if normal then
+        normal:SetTexCoord(1, 0, 0, 1)
+    end
+    local highlight = frame.LeftResizeGrip.GetHighlightTexture and frame.LeftResizeGrip:GetHighlightTexture()
+    if highlight then
+        highlight:SetTexCoord(1, 0, 0, 1)
+    end
+    local pushed = frame.LeftResizeGrip.GetPushedTexture and frame.LeftResizeGrip:GetPushedTexture()
+    if pushed then
+        pushed:SetTexCoord(1, 0, 0, 1)
+    end
+    frame.LeftResizeGrip:ClearAllPoints()
+    frame.LeftResizeGrip:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    frame.LeftResizeGrip:SetFrameLevel(BAG_FRAME_LEVEL + 18)
+end
+
+local function GetScrollBar(scrollFrame)
+    if not scrollFrame then
+        return nil
+    end
+    return scrollFrame.ScrollBar or scrollFrame.scrollBar or (scrollFrame.GetName and _G[(scrollFrame:GetName() or "") .. "ScrollBar"])
+end
+
+local function SetScrollControlsShown(scrollFrame, shown)
+    if not scrollFrame then
+        return
+    end
+    local scrollBar = GetScrollBar(scrollFrame)
+    if scrollBar then
+        scrollBar:SetShown(shown)
+        if shown then
+            scrollBar:Show()
+        else
+            scrollBar:Hide()
+        end
+    end
+    if scrollFrame.LunaBagsScrollTrack then
+        scrollFrame.LunaBagsScrollTrack:SetShown(shown)
+    end
+    if scrollFrame.LunaBagsScrollUpButton then
+        scrollFrame.LunaBagsScrollUpButton:SetShown(shown)
+    end
+    if scrollFrame.LunaBagsScrollDownButton then
+        scrollFrame.LunaBagsScrollDownButton:SetShown(shown)
+    end
+end
+
+local function StyleScrollButton(button, label)
+    if not button then
+        return
+    end
+    button:SetSize(12, 12)
+    if button.SetNormalTexture then button:SetNormalTexture("Interface\\Buttons\\WHITE8X8") end
+    if button.SetPushedTexture then button:SetPushedTexture("Interface\\Buttons\\WHITE8X8") end
+    if button.SetHighlightTexture then button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8") end
+    local normal = button.GetNormalTexture and button:GetNormalTexture()
+    if normal then normal:SetVertexColor(0.10, 0.10, 0.10, 0.95) end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then pushed:SetVertexColor(0.16, 0.16, 0.16, 1) end
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then highlight:SetVertexColor(0.28, 0.28, 0.28, 0.55) end
+    if not button.LunaBagsLabel then
+        button.LunaBagsLabel = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.LunaBagsLabel:SetPoint("CENTER", button, "CENTER", 0, 0)
+    end
+    button.LunaBagsLabel:SetText(label)
+    button.LunaBagsLabel:SetTextColor(0.78, 0.78, 0.78, 1)
+end
+
+local function StyleScrollFrame(scrollFrame)
+    if not scrollFrame then
+        return
+    end
+    local scrollBar = GetScrollBar(scrollFrame)
+    if not scrollBar then
+        return
+    end
+    local scrollName = scrollBar.GetName and scrollBar:GetName() or nil
+    local upButton = scrollBar.ScrollUpButton or scrollBar.ScrollUp or (scrollName and (_G[scrollName .. "ScrollUpButton"] or _G[scrollName .. "UpButton"]))
+    local downButton = scrollBar.ScrollDownButton or scrollBar.ScrollDown or (scrollName and (_G[scrollName .. "ScrollDownButton"] or _G[scrollName .. "DownButton"]))
+
+    scrollBar:ClearAllPoints()
+    scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", 7, -14)
+    scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", 7, 14)
+    scrollBar:SetWidth(10)
+    scrollBar:SetFrameLevel((scrollFrame:GetFrameLevel() or BAG_FRAME_LEVEL) + 2)
+
+    if not scrollFrame.LunaBagsScrollTrack then
+        scrollFrame.LunaBagsScrollTrack = CreateFrame("Frame", nil, scrollFrame, "BackdropTemplate")
+        scrollFrame.LunaBagsScrollTrack:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+    end
+    scrollFrame.LunaBagsScrollTrack:ClearAllPoints()
+    scrollFrame.LunaBagsScrollTrack:SetPoint("TOPLEFT", scrollBar, "TOPLEFT", -1, 0)
+    scrollFrame.LunaBagsScrollTrack:SetPoint("BOTTOMRIGHT", scrollBar, "BOTTOMRIGHT", 1, 0)
+    scrollFrame.LunaBagsScrollTrack:SetFrameLevel(scrollBar:GetFrameLevel() - 1)
+    scrollFrame.LunaBagsScrollTrack:SetBackdropColor(0.035, 0.035, 0.035, 0.72)
+    scrollFrame.LunaBagsScrollTrack:SetBackdropBorderColor(0.18, 0.18, 0.18, 0.85)
+
+    local thumb = scrollBar.GetThumbTexture and scrollBar:GetThumbTexture() or scrollBar.ThumbTexture
+    if thumb then
+        thumb:SetTexture("Interface\\Buttons\\WHITE8X8")
+        thumb:SetVertexColor(0.42, 0.42, 0.42, 0.92)
+        thumb:SetWidth(8)
+    end
+
+    if upButton then
+        scrollFrame.LunaBagsScrollUpButton = upButton
+        upButton:ClearAllPoints()
+        upButton:SetPoint("BOTTOM", scrollBar, "TOP", 0, 2)
+        StyleScrollButton(upButton, "^")
+    end
+    if downButton then
+        scrollFrame.LunaBagsScrollDownButton = downButton
+        downButton:ClearAllPoints()
+        downButton:SetPoint("TOP", scrollBar, "BOTTOM", 0, -2)
+        StyleScrollButton(downButton, "v")
+    end
+end
+
+local function EnsureScrollFrame(frame)
+    if not frame or not frame.content then
+        return nil
+    end
+    if not frame.ScrollFrame then
+        frame.ScrollFrame = CreateFrame("ScrollFrame", "LunaBagsOneBagScrollFrame", frame, "UIPanelScrollFrameTemplate")
+        frame.ScrollFrame:SetFrameLevel(BAG_FRAME_LEVEL + 5)
+        frame.ScrollFrame:EnableMouseWheel(true)
+        frame.ScrollFrame:SetScript("OnMouseWheel", function(scrollFrame, delta)
+            local maxScroll = math.max(0, scrollFrame:GetVerticalScrollRange() or 0)
+            if maxScroll <= 0 then
+                return
+            end
+            local step = 48
+            local current = scrollFrame:GetVerticalScroll() or 0
+            scrollFrame:SetVerticalScroll(math.max(0, math.min(maxScroll, current - (delta * step))))
+        end)
+    end
+    if frame.content.SetParent and frame.content:GetParent() ~= frame.ScrollFrame then
+        frame.content:SetParent(frame.ScrollFrame)
+    end
+    frame.content:SetFrameLevel(BAG_FRAME_LEVEL + 5)
+    if frame.ScrollFrame:GetScrollChild() ~= frame.content then
+        frame.ScrollFrame:SetScrollChild(frame.content)
+    end
+    StyleScrollFrame(frame.ScrollFrame)
+    return frame.ScrollFrame
 end
 
 local function IsDebugEnabled()
@@ -118,6 +366,10 @@ local function GetAppearanceConfig(cfg)
 end
 
 local function ApplyWindowAppearance(frame, cfg)
+    if ns.WindowChrome and ns.WindowChrome.ApplyAppearance then
+        ns.WindowChrome.ApplyAppearance(frame, cfg)
+        return
+    end
     if not frame then
         return
     end
@@ -328,6 +580,93 @@ end
 
 local function FormatSlotUsageText(used, total)
     return ("%d/%d"):format(tonumber(used) or 0, tonumber(total) or 0)
+end
+
+local function GetCursorItemID()
+    if not GetCursorInfo then
+        return nil
+    end
+    local cursorType, value1, value2, value3 = GetCursorInfo()
+    if cursorType ~= "item" then
+        return nil
+    end
+    if tonumber(value1) then
+        return tonumber(value1)
+    end
+    local function MatchItemID(value)
+        if type(value) == "string" then
+            local itemID = tonumber(value:match("item:(%d+)"))
+            if itemID then
+                return itemID
+            end
+        end
+        return nil
+    end
+    return MatchItemID(value1) or MatchItemID(value2) or MatchItemID(value3)
+end
+
+local function AssignCursorItemToCategory(owner, category)
+    local itemID = GetCursorItemID()
+    if not itemID or not category or not ns.Categories or not ns.Categories.AddItemIDRule then
+        return false
+    end
+
+    local added = ns.Categories:AddItemIDRule(category, itemID)
+    if ClearCursor then
+        ClearCursor()
+    end
+    if added then
+        if owner then
+            owner._layoutModel = nil
+            if owner.Refresh then
+                owner:Refresh()
+            end
+        end
+        NotifyOptionsChanged()
+        if ns.LunaBags and ns.LunaBags.Print then
+            ns.LunaBags:Print(("Added item ID %d to category %s."):format(itemID, category.name or "Category"))
+        end
+    elseif ns.LunaBags and ns.LunaBags.Print then
+        ns.LunaBags:Print(("Item ID %d is already assigned to category %s."):format(itemID, category.name or "Category"))
+    end
+    return added
+end
+
+local function ConfigureCategoryPlaceholder(frame, owner, category)
+    if not frame then
+        return
+    end
+    frame.category = category
+    frame:EnableMouse(category ~= nil)
+    frame:SetScript("OnReceiveDrag", nil)
+    frame:SetScript("OnMouseUp", nil)
+    frame:SetScript("OnEnter", nil)
+    frame:SetScript("OnLeave", nil)
+    if not category then
+        return
+    end
+
+    frame:SetScript("OnReceiveDrag", function(self)
+        AssignCursorItemToCategory(owner, self.category)
+    end)
+    frame:SetScript("OnMouseUp", function(self, button)
+        if button == "LeftButton" and CursorHasItem and CursorHasItem() then
+            AssignCursorItemToCategory(owner, self.category)
+        end
+    end)
+    frame:SetScript("OnEnter", function(self)
+        if GameTooltip and CursorHasItem and CursorHasItem() then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Assign item to category")
+            GameTooltip:AddLine(category.name or "Category", 0.85, 0.85, 0.85)
+            GameTooltip:Show()
+        end
+    end)
+    frame:SetScript("OnLeave", function()
+        if GameTooltip then
+            GameTooltip:Hide()
+        end
+    end)
 end
 
 local function EnsureTooltipPostHook()
@@ -911,14 +1250,48 @@ function OneBag:UpdateSearchLayout()
         return
     end
 
+    local scrollFrame = EnsureScrollFrame(self.frame)
     local topInset = self.searchVisible and 34 or 12
-    self.frame.content:ClearAllPoints()
-    self.frame.content:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
-    self.frame.content:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+    if scrollFrame then
+        scrollFrame:ClearAllPoints()
+        scrollFrame:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
+        scrollFrame:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+        self.frame.content:ClearAllPoints()
+        self.frame.content:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
+    else
+        self.frame.content:ClearAllPoints()
+        self.frame.content:SetPoint("TOPLEFT", self.frame.DarkInset, "TOPLEFT", 12, -topInset)
+        self.frame.content:SetPoint("BOTTOMRIGHT", self.frame.DarkInset, "BOTTOMRIGHT", -12, 12)
+    end
 
     if self.frame.SearchPanel then
         self.frame.SearchPanel:SetShown(self.searchVisible)
     end
+end
+
+function OneBag:UpdateScrollFrame(contentHeight, viewportHeight)
+    if not self.frame or not self.frame.content then
+        return
+    end
+    local scrollFrame = EnsureScrollFrame(self.frame)
+    if not scrollFrame then
+        return
+    end
+    local contentWidth = math.max(1, scrollFrame:GetWidth() or self.frame.content:GetWidth() or 1)
+    local childHeight = math.max(contentHeight or 1, viewportHeight or 1, 1)
+    self._scrollContentHeight = contentHeight or 1
+    self._scrollViewportHeight = viewportHeight or 1
+    self.frame.content:SetSize(contentWidth, childHeight)
+    local overflow = (contentHeight or 0) > ((viewportHeight or 0) + 1)
+    scrollFrame:EnableMouseWheel(overflow)
+    if not overflow then
+        scrollFrame:SetVerticalScroll(0)
+    else
+        local maxScroll = math.max(0, childHeight - (viewportHeight or 0))
+        local current = math.min(scrollFrame:GetVerticalScroll() or 0, maxScroll)
+        scrollFrame:SetVerticalScroll(current)
+    end
+    SetScrollControlsShown(scrollFrame, overflow)
 end
 
 function OneBag:SetBagSlotPreview(bagID)
@@ -1009,6 +1382,7 @@ function OneBag:CreateFrame()
         OneBag:SavePosition()
     end)
     frame.content = frame.Content or frame.content
+    EnsureScrollFrame(frame)
     frame.searchBox = frame.Header and frame.Header.SearchBox or nil
     frame.moneyText = (frame.MoneyBar and frame.MoneyBar.Text) or frame.moneyText
 
@@ -1399,6 +1773,7 @@ function OneBag:CreateFrame()
     frame.KeyringPanel:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, 0)
     frame.KeyringPanel:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, 0)
 
+    EnsureResizeGrip(self, frame)
     frame.BagSlotParents = frame.BagSlotParents or {}
     ApplyBagFrameLayering(frame)
 
@@ -2242,17 +2617,25 @@ AddMoneyTooltipBreakdown = function(owner)
     GameTooltip:Show()
 end
 
-function OneBag:Refresh()
+function OneBag:Refresh(layoutOnly)
     if not self.frame then
         return
     end
+    layoutOnly = layoutOnly == true
     EnsureVisibleBagDefaults(self.visibleBags)
     self:UpdateSearchLayout()
 
-    local allSlots = self:BuildLiveSlots()
-    local keySlots = self:BuildKeyringSlots()
-    local occupiedSlots, totalSlots = CountSlotUsage(allSlots)
-    self:RefreshBagSlots()
+    local cachedLayout = layoutOnly and self._layoutModel or nil
+    local allSlots = cachedLayout and cachedLayout.allSlots or self:BuildLiveSlots()
+    local keySlots = cachedLayout and cachedLayout.keySlots or self:BuildKeyringSlots()
+    local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
+    local totalSlots = cachedLayout and cachedLayout.totalSlots or nil
+    if not occupiedSlots or not totalSlots then
+        occupiedSlots, totalSlots = CountSlotUsage(allSlots)
+    end
+    if not layoutOnly then
+        self:RefreshBagSlots()
+    end
     local searching = self.searchText and self.searchText ~= ""
     local readOnly = not IsViewingCurrentCharacter()
     local used = #allSlots
@@ -2262,7 +2645,7 @@ function OneBag:Refresh()
     local gridWidth = cols * size + ((cols - 1) * spacing)
     local gridInsetX = spacing
     local gridInsetY = spacing
-    local framePaddingX = 26
+    local framePaddingX = BAG_FRAME_PADDING_X
     local contentTopInset = self.searchVisible and 34 or 12
     local frameVerticalChrome = 79 + contentTopInset
 
@@ -2271,31 +2654,25 @@ function OneBag:Refresh()
     local contentHeight = gridInsetY + rows * size + (rows - 1) * spacing + gridInsetY
 
     -- Desired frame size from configured columns.
-    local frameWidth = desiredContentWidth + framePaddingX
-    local frameHeight = math.max(200, contentHeight + frameVerticalChrome)
+    local frameWidth = math.max(desiredContentWidth + framePaddingX, tonumber(self.windowWidth) or 0)
+    local frameHeight = math.max(200, math.min(tonumber(self.maxHeight) or BAG_DEFAULT_MAX_HEIGHT, contentHeight + frameVerticalChrome))
     self.frame:SetSize(frameWidth, frameHeight)
 
     -- Recenter against actual available content width (template/min-width can exceed desired width).
-    local actualContentWidth = self.frame.content and self.frame.content:GetWidth() or desiredContentWidth
+    local actualContentWidth = self.frame.ScrollFrame and self.frame.ScrollFrame:GetWidth() or (self.frame.content and self.frame.content:GetWidth()) or desiredContentWidth
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
     local positioned = {}
-    local bagSectionGapY = spacing
-    local bagBuckets = {}
-    for _, entry in ipairs(allSlots) do
-        bagBuckets[entry.bagID] = bagBuckets[entry.bagID] or {}
-        bagBuckets[entry.bagID][#bagBuckets[entry.bagID] + 1] = entry
-    end
-
-    local nonSplit = {}
-    local splitSections = {}
-    local categorySections = {}
+    local bagSectionGapY = math.max(spacing * 2, spacing + 6)
+    local nonSplit = cachedLayout and cachedLayout.nonSplit or {}
+    local splitSections = cachedLayout and cachedLayout.splitSections or {}
+    local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
     local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
     local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
 
-    if categoriesEnabled and ns.Categories then
+    if (not cachedLayout) and categoriesEnabled and ns.Categories then
         for index, category in ipairs(ns.Categories:GetList("bags") or {}) do
             if category.enabled ~= false then
                 local key = category.id or category.name or tostring(index)
@@ -2311,42 +2688,60 @@ function OneBag:Refresh()
         end
     end
 
-    for bagID = 0, 4 do
-        if self.visibleBags[bagID] ~= false and not IsKeyringBag(bagID) then
-            local bucket = bagBuckets[bagID] or {}
-            local remaining = {}
-            for _, entry in ipairs(bucket) do
-                local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bags") or nil
-                if category then
-                    local key = category.id or category.name or tostring(#categorySections + 1)
-                    local section = categoryByID[key]
-                    if not section then
-                        section = { title = category.name or "Category", entries = {}, category = category, minSlots = tonumber(category.minSlots) or 0 }
-                        categoryByID[key] = section
-                        categorySections[#categorySections + 1] = section
-                    end
-                    section.entries[#section.entries + 1] = entry
-                else
-                    remaining[#remaining + 1] = entry
-                end
-            end
-            bucket = remaining
-            if self.splitByBagRows or IsBagSplitEnabled(bagID) then
-                table.sort(bucket, function(a, b)
-                    local aHasItem = a and a.item ~= nil
-                    local bHasItem = b and b.item ~= nil
-                    if aHasItem ~= bHasItem then
-                        return aHasItem
-                    end
-                    return (a.slot or 0) < (b.slot or 0)
-                end)
-                splitSections[#splitSections + 1] = { bagID = bagID, entries = bucket }
-            else
+    if not cachedLayout then
+        local bagBuckets = {}
+        for _, entry in ipairs(allSlots) do
+            bagBuckets[entry.bagID] = bagBuckets[entry.bagID] or {}
+            bagBuckets[entry.bagID][#bagBuckets[entry.bagID] + 1] = entry
+        end
+
+        for bagID = 0, 4 do
+            if self.visibleBags[bagID] ~= false and not IsKeyringBag(bagID) then
+                local bucket = bagBuckets[bagID] or {}
+                local remaining = {}
                 for _, entry in ipairs(bucket) do
-                    nonSplit[#nonSplit + 1] = entry
+                    local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bags") or nil
+                    if category then
+                        local key = category.id or category.name or tostring(#categorySections + 1)
+                        local section = categoryByID[key]
+                        if not section then
+                            section = { title = category.name or "Category", entries = {}, category = category, minSlots = tonumber(category.minSlots) or 0 }
+                            categoryByID[key] = section
+                            categorySections[#categorySections + 1] = section
+                        end
+                        section.entries[#section.entries + 1] = entry
+                    else
+                        remaining[#remaining + 1] = entry
+                    end
+                end
+                bucket = remaining
+                if self.splitByBagRows or IsBagSplitEnabled(bagID) then
+                    table.sort(bucket, function(a, b)
+                        local aHasItem = a and a.item ~= nil
+                        local bHasItem = b and b.item ~= nil
+                        if aHasItem ~= bHasItem then
+                            return aHasItem
+                        end
+                        return (a.slot or 0) < (b.slot or 0)
+                    end)
+                    splitSections[#splitSections + 1] = { bagID = bagID, entries = bucket }
+                else
+                    for _, entry in ipairs(bucket) do
+                        nonSplit[#nonSplit + 1] = entry
+                    end
                 end
             end
         end
+
+        self._layoutModel = {
+            allSlots = allSlots,
+            keySlots = keySlots,
+            occupiedSlots = occupiedSlots,
+            totalSlots = totalSlots,
+            nonSplit = nonSplit,
+            splitSections = splitSections,
+            categorySections = categorySections,
+        }
     end
 
     local usedRows = 0
@@ -2390,6 +2785,7 @@ function OneBag:Refresh()
                 col = localIndex % cols,
                 row = usedRows + math.floor(localIndex / cols),
                 yOffset = extraYOffset,
+                category = section.category,
             }
         end
         if #entries == 0 then
@@ -2413,40 +2809,71 @@ function OneBag:Refresh()
         end
 
         local gridGapCols = (categoryColumnCount > 1 and ((categoryColumnCount * 2 - 1) <= cols)) and 1 or 0
-        local sectionCols = math.max(1, math.floor((cols - ((categoryColumnCount - 1) * gridGapCols)) / categoryColumnCount))
-        local rowHeights = {}
+        local defaultSectionCols = math.max(1, math.floor((cols - ((categoryColumnCount - 1) * gridGapCols)) / categoryColumnCount))
+        local columnHeights = {}
         local sectionLayouts = {}
+        for col = 0, cols - 1 do
+            columnHeights[col] = 0
+        end
 
-        for index, section in ipairs(sections) do
-            local gridCol = (index - 1) % categoryColumnCount
-            local gridRow = math.floor((index - 1) / categoryColumnCount)
-            local startCol = gridCol * (sectionCols + gridGapCols)
+        local function GetSectionCols(section)
+            local category = section and section.category
+            local requested = tonumber(category and category.columns)
+            if requested and requested > 0 then
+                return math.max(1, math.min(cols, math.floor(requested)))
+            end
+            return defaultSectionCols
+        end
+
+        local function FindMasonrySlot(sectionCols)
+            local bestCol = 0
+            local bestHeight
+            for startCol = 0, cols - sectionCols do
+                local height = 0
+                for col = startCol, startCol + sectionCols - 1 do
+                    height = math.max(height, columnHeights[col] or 0)
+                end
+                if bestHeight == nil or height < bestHeight then
+                    bestHeight = height
+                    bestCol = startCol
+                end
+            end
+            return bestCol, bestHeight or 0
+        end
+
+        for _, section in ipairs(sections) do
+            local sectionCols = GetSectionCols(section)
+            local startCol, topOffset = FindMasonrySlot(sectionCols)
             local entries = section.entries or {}
             local minSlots = math.max(0, tonumber(section.minSlots) or 0)
             local visibleSlots = (#entries == 0) and math.max(1, minSlots) or math.max(#entries, minSlots)
             local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
-            local sectionHeight = sectionHeaderHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
-            rowHeights[gridRow] = math.max(rowHeights[gridRow] or 0, sectionHeight)
+            local headerHeight = (section.title and section.title ~= "") and sectionHeaderHeight or 0
+            local sectionHeight = headerHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
+            if topOffset > 0 then
+                topOffset = topOffset + bagSectionGapY
+            end
+            for col = startCol, startCol + sectionCols - 1 do
+                columnHeights[col] = topOffset + sectionHeight
+            end
             sectionLayouts[#sectionLayouts + 1] = {
                 section = section,
-                gridRow = gridRow,
                 startCol = startCol,
+                topOffset = topOffset,
+                sectionCols = sectionCols,
                 entries = entries,
                 visibleSlots = visibleSlots,
             }
         end
 
         for _, layout in ipairs(sectionLayouts) do
-            local priorOffset = 0
-            for row = 0, layout.gridRow - 1 do
-                priorOffset = priorOffset + (rowHeights[row] or 0) + bagSectionGapY
-            end
             local section = layout.section
             local entries = layout.entries
             local startCol = layout.startCol
             local visibleSlots = layout.visibleSlots
+            local sectionCols = layout.sectionCols
             local startRow = usedRows
-            local headerOffset = extraYOffset + priorOffset
+            local headerOffset = extraYOffset + (layout.topOffset or 0)
 
             if section.title and section.title ~= "" then
                 sectionHeaders[#sectionHeaders + 1] = {
@@ -2474,6 +2901,7 @@ function OneBag:Refresh()
                     col = startCol + (localIndex % sectionCols),
                     row = startRow + math.floor(localIndex / sectionCols),
                     yOffset = headerOffset,
+                    category = section.category,
                 }
             end
             if #entries == 0 then
@@ -2488,13 +2916,8 @@ function OneBag:Refresh()
         end
 
         local totalHeight = 0
-        local rowIndex = 0
-        while rowHeights[rowIndex] do
-            if rowIndex > 0 then
-                totalHeight = totalHeight + bagSectionGapY
-            end
-            totalHeight = totalHeight + rowHeights[rowIndex]
-            rowIndex = rowIndex + 1
+        for col = 0, cols - 1 do
+            totalHeight = math.max(totalHeight, columnHeights[col] or 0)
         end
         extraYOffset = extraYOffset + math.max(sectionHeaderHeight + size, totalHeight)
         hasBaseContent = true
@@ -2546,8 +2969,10 @@ function OneBag:Refresh()
         maxBottom = gridInsetY + size
     end
     contentHeight = maxBottom + gridInsetY
-    frameHeight = math.max(200, contentHeight + frameVerticalChrome)
+    local naturalFrameHeight = contentHeight + frameVerticalChrome
+    frameHeight = math.max(200, math.min(tonumber(self.maxHeight) or BAG_DEFAULT_MAX_HEIGHT, naturalFrameHeight))
     self.frame:SetSize(frameWidth, frameHeight)
+    self:UpdateScrollFrame(contentHeight, math.max(1, frameHeight - frameVerticalChrome))
 
     self.sectionHeaders = self.sectionHeaders or {}
     for i, header in ipairs(sectionHeaders) do
@@ -2589,9 +3014,11 @@ function OneBag:Refresh()
         frame:ClearAllPoints()
         frame:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (placeholder.col or 0) * (size + spacing), -gridInsetY - (placeholder.row or 0) * (size + spacing) - (placeholder.yOffset or 0))
         frame:SetBackdropColor(0.03, 0.03, 0.03, 0.35)
+        ConfigureCategoryPlaceholder(frame, self, placeholder.category)
         frame:Show()
     end
     for i = #sectionPlaceholders + 1, #(self.sectionPlaceholders or {}) do
+        ConfigureCategoryPlaceholder(self.sectionPlaceholders[i], self, nil)
         self.sectionPlaceholders[i]:Hide()
     end
 
@@ -2621,7 +3048,7 @@ function OneBag:Refresh()
     for i = 1, used do
         local button = usingReadonlyButtons and self:AcquireReadonlyButton(i) or self:AcquireButton(i)
         button:SetSize(size, size)
-        if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+        if (not layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
             ns.ItemButtonStyle.Apply(button)
         end
         local p = positioned[i]
@@ -2630,6 +3057,12 @@ function OneBag:Refresh()
         local extraY = p.yOffset or 0
         button:ClearAllPoints()
         button:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + col * (size + spacing), -gridInsetY - row * (size + spacing) - extraY)
+        if layoutOnly then
+            if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
+                ns.ItemButtonStyle.ResetState(button)
+            end
+            button:Show()
+        else
 
         local info = p.entry
         local isMatch = ItemMatchesSearch(info.item, self.searchText)
@@ -2723,6 +3156,7 @@ function OneBag:Refresh()
             end
         end
         button:Show()
+        end
     end
 
     for i = used + 1, #self.buttons do
@@ -2828,6 +3262,89 @@ function OneBag:SavePosition()
     cfg.y = y or 126
 end
 
+function OneBag:SaveWindowWidth(width)
+    local cfg = GetConfig()
+    if not cfg then
+        return
+    end
+    width = math.max(280, math.min(900, math.floor((tonumber(width) or self.windowWidth or 481) + 0.5)))
+    cfg.windowWidth = width
+    cfg._windowWidthMigrated = true
+    self.windowWidth = width
+end
+
+function OneBag:StartResize(side)
+    if not self.frame or self._resizing then
+        return
+    end
+    self._resizing = true
+    self._resizeSide = (side == "left") and "left" or "right"
+    self._resizeLeft = self.frame:GetLeft() or 0
+    self._resizeRight = self.frame:GetRight() or (self._resizeLeft + (self.frame:GetWidth() or self.windowWidth or 0))
+    self._resizeBottom = self.frame:GetBottom() or 0
+    self.frame:ClearAllPoints()
+    if self._resizeSide == "left" then
+        self.frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMLEFT", self._resizeRight, self._resizeBottom)
+    else
+        self.frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", self._resizeLeft, self._resizeBottom)
+    end
+    self:SavePosition()
+
+    local grip = (self._resizeSide == "left") and self.frame.LeftResizeGrip or self.frame.ResizeGrip
+    if grip then
+        grip:SetScript("OnUpdate", function()
+            if not IsMouseButtonDown("LeftButton") then
+                OneBag:StopResize()
+                return
+            end
+            local cursorX = GetCursorPosition()
+            local scale = UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale() or 1
+            local scaledCursorX = cursorX / scale
+            local rawWidth
+            if OneBag._resizeSide == "left" then
+                rawWidth = (OneBag._resizeRight or scaledCursorX) - scaledCursorX
+            else
+                rawWidth = scaledCursorX - (OneBag._resizeLeft or 0)
+            end
+            local width = math.max(280, math.min(900, math.floor(rawWidth + 0.5)))
+            if width ~= OneBag.windowWidth then
+                OneBag.windowWidth = width
+                if OneBag.frame.SetWidth then
+                    OneBag.frame:SetWidth(width)
+                else
+                    OneBag.frame:SetSize(width, OneBag.frame:GetHeight())
+                end
+                local newColumns = CalculateColumnsFromWindowWidth(OneBag.windowWidth, OneBag.slotSize, OneBag.spacing)
+                if newColumns ~= OneBag.columns then
+                    OneBag.columns = newColumns
+                    OneBag:Refresh(true)
+                else
+                    OneBag:UpdateScrollFrame(OneBag._scrollContentHeight or 1, OneBag._scrollViewportHeight or 1)
+                end
+            end
+        end)
+    end
+end
+
+function OneBag:StopResize()
+    if not self._resizing then
+        return
+    end
+    self._resizing = false
+    if self.frame and self.frame.ResizeGrip then
+        self.frame.ResizeGrip:SetScript("OnUpdate", nil)
+    end
+    if self.frame and self.frame.LeftResizeGrip then
+        self.frame.LeftResizeGrip:SetScript("OnUpdate", nil)
+    end
+    self._resizeSide = nil
+    self:SaveWindowWidth(self.windowWidth)
+    self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
+    self:Refresh()
+    self:SavePosition()
+    NotifyOptionsChanged()
+end
+
 function OneBag:SaveVisibleBagsState()
     local cfg = GetConfig()
     if not cfg then
@@ -2843,9 +3360,16 @@ function OneBag:ApplySettings()
         return
     end
 
-    self.columns = math.max(6, math.min(16, tonumber(cfg.columns) or 11))
     self.slotSize = math.max(24, math.min(48, tonumber(cfg.itemSize) or 36))
     self.spacing = math.max(0, math.min(12, tonumber(cfg.spacing) or 4))
+    if cfg._windowWidthMigrated ~= true then
+        cfg.windowWidth = CalculateWindowWidthFromColumns(tonumber(cfg.columns) or 11, self.slotSize, self.spacing)
+        cfg._windowWidthMigrated = true
+    end
+    local fallbackWidth = CalculateWindowWidthFromColumns(tonumber(cfg.columns) or 11, self.slotSize, self.spacing)
+    self.windowWidth = math.max(240, math.min(1200, tonumber(cfg.windowWidth) or fallbackWidth))
+    self.maxHeight = math.max(220, math.min(1200, tonumber(cfg.windowMaxHeight) or BAG_DEFAULT_MAX_HEIGHT))
+    self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
     local perChar = cfg._activeCharacterData or {}
     self.splitByBagRows = (perChar.splitByBagRows ~= nil) and (perChar.splitByBagRows == true) or (cfg.splitByBagRows == true)
     self.showBagRail = (perChar.showBagRail ~= nil) and (perChar.showBagRail == true) or (cfg.showBagRail ~= false)
@@ -2861,6 +3385,14 @@ function OneBag:ApplySettings()
         if self.frame.HeaderDrag then
             self.frame.HeaderDrag:EnableMouse(not cfg.locked)
             self.frame.HeaderDrag:SetShown(not cfg.locked)
+        end
+        if self.frame.ResizeGrip then
+            self.frame.ResizeGrip:EnableMouse(not cfg.locked)
+            self.frame.ResizeGrip:SetAlpha(cfg.locked and 0.25 or 1)
+        end
+        if self.frame.LeftResizeGrip then
+            self.frame.LeftResizeGrip:EnableMouse(not cfg.locked)
+            self.frame.LeftResizeGrip:SetAlpha(cfg.locked and 0.25 or 1)
         end
         ApplyWindowAppearance(self.frame, cfg)
         if self.frame.RailToggleButton then

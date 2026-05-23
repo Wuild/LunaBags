@@ -148,7 +148,8 @@ function ItemButtonStyle.ApplyTextStyle(button)
     end
     local cfg = ItemButtonStyle.GetConfig()
     local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-    local count = button.count or button.Count or (button.GetName and _G[button:GetName() .. "Count"])
+    local buttonName = button.GetName and button:GetName() or nil
+    local count = button.count or button.Count or (buttonName and _G[buttonName .. "Count"])
     local countType = type(count)
     if (countType == "table" or countType == "userdata") and count.SetFont then
         count:SetFont(font, cfg.stackCountTextSize or 12, "OUTLINE")
@@ -163,7 +164,7 @@ function ItemButtonStyle.ApplyTextStyle(button)
             end
         end
     end
-    local cooldown = button.cooldown or button.Cooldown or (button.GetName and _G[button:GetName() .. "Cooldown"])
+    local cooldown = button.cooldown or button.Cooldown or (buttonName and _G[buttonName .. "Cooldown"])
     if cooldown and cooldown.GetRegions then
         for _, region in ipairs({ cooldown:GetRegions() }) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.SetFont then
@@ -173,14 +174,10 @@ function ItemButtonStyle.ApplyTextStyle(button)
     end
 end
 
-function ItemButtonStyle.SetBorderColor(button, r, g, b, a)
+function ItemButtonStyle.SetBorderVisualColor(button, r, g, b, a)
     if not button or not button.StyleBorder then
         return
     end
-    button.StyleBorderBaseR = r
-    button.StyleBorderBaseG = g
-    button.StyleBorderBaseB = b
-    button.StyleBorderBaseA = a
 
     EnsureLineBorder(button)
     ItemButtonStyle.ApplyBorderSize(button)
@@ -195,6 +192,37 @@ function ItemButtonStyle.SetBorderColor(button, r, g, b, a)
             line:SetVertexColor(r or 0.34, g or 0.34, b or 0.34, a or 0.95)
             line:SetShown(visible)
         end
+    end
+end
+
+function ItemButtonStyle.SetBorderColor(button, r, g, b, a)
+    if not button or not button.StyleBorder then
+        return
+    end
+    button.StyleBorderBaseR = r
+    button.StyleBorderBaseG = g
+    button.StyleBorderBaseB = b
+    button.StyleBorderBaseA = a
+    ItemButtonStyle.SetBorderVisualColor(button, r, g, b, a)
+end
+
+function ItemButtonStyle.ResetState(button)
+    if not button or not button.StyleBG or not button.StyleBorder then
+        return
+    end
+    local cfg = ItemButtonStyle.GetConfig()
+    button._styleDragging = false
+    button:SetAlpha(button._baseAlpha or 1)
+    button.StyleBG:SetBackdropColor(cfg.frameR, cfg.frameG, cfg.frameB, cfg.frameA)
+    ItemButtonStyle.SetBorderVisualColor(
+        button,
+        button.StyleBorderBaseR or 0.34,
+        button.StyleBorderBaseG or 0.34,
+        button.StyleBorderBaseB or 0.34,
+        button.StyleBorderBaseA or 0.95
+    )
+    if button.StyleGlow then
+        button.StyleGlow:Hide()
     end
 end
 
@@ -233,7 +261,8 @@ function ItemButtonStyle.Apply(button)
         button.StyleGlow:Hide()
     end
 
-    local icon = button.icon or button.Icon or _G[button:GetName() .. "IconTexture"] or _G[button:GetName() .. "Icon"]
+    local buttonName = button.GetName and button:GetName() or nil
+    local icon = button.icon or button.Icon or (buttonName and (_G[buttonName .. "IconTexture"] or _G[buttonName .. "Icon"]))
     if icon then
         icon:ClearAllPoints()
         icon:SetPoint("TOPLEFT", button, "TOPLEFT", -3, 4)
@@ -275,19 +304,8 @@ function ItemButtonStyle.Apply(button)
             return math.min(1, (v or 0) + amount)
         end
         local function SetIdle(self)
-            if not self.StyleBG or not self.StyleBorder then return end
-            local style = ItemButtonStyle.GetConfig()
             if self._styleDragging then return end
-            self:SetAlpha(self._baseAlpha or 1)
-            self.StyleBG:SetBackdropColor(style.frameR, style.frameG, style.frameB, style.frameA)
-            ItemButtonStyle.SetBorderColor(
-                self,
-                self.StyleBorderBaseR or 0.34,
-                self.StyleBorderBaseG or 0.34,
-                self.StyleBorderBaseB or 0.34,
-                self.StyleBorderBaseA or 0.95
-            )
-            if self.StyleGlow then self.StyleGlow:Hide() end
+            ItemButtonStyle.ResetState(self)
             if self.icon and self.icon.SetDesaturated then
                 self.icon:SetDesaturated(false)
             end
@@ -298,7 +316,7 @@ function ItemButtonStyle.Apply(button)
             if self._styleDragging then return end
             self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(Brighten(style.frameR, 0.04), Brighten(style.frameG, 0.04), Brighten(style.frameB, 0.04), math.min(1, style.frameA + 0.03))
-            ItemButtonStyle.SetBorderColor(
+            ItemButtonStyle.SetBorderVisualColor(
                 self,
                 Brighten(self.StyleBorderBaseR or 0.34, 0.10),
                 Brighten(self.StyleBorderBaseG or 0.34, 0.10),
@@ -316,7 +334,7 @@ function ItemButtonStyle.Apply(button)
             self._styleDragging = true
             self:SetAlpha(math.max(0.1, (self._baseAlpha or 1) * 0.72))
             self.StyleBG:SetBackdropColor(Brighten(style.frameR, 0.07), Brighten(style.frameG, 0.07), Brighten(style.frameB, 0.07), math.min(1, style.frameA + 0.06))
-            ItemButtonStyle.SetBorderColor(
+            ItemButtonStyle.SetBorderVisualColor(
                 self,
                 Brighten(self.StyleBorderBaseR or 0.34, 0.20),
                 Brighten(self.StyleBorderBaseG or 0.34, 0.20),
@@ -333,6 +351,10 @@ function ItemButtonStyle.Apply(button)
         button:HookScript("OnLeave", SetIdle)
         button:HookScript("OnMouseDown", SetDrag)
         button:HookScript("OnMouseUp", function(self)
+            self._styleDragging = false
+            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
+        end)
+        button:HookScript("OnClick", function(self)
             self._styleDragging = false
             if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
         end)
