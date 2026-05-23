@@ -22,8 +22,10 @@ Libs\Ace3\AceConfig-3.0\AceConfigDialog-3.0\AceConfigDialog-3.0.lua
 Core\Core.lua
 Core\BagHooks.lua
 Core\Plugins.lua
+Core\Categories.lua
 Core\Sort.lua
 Data\BagData.lua
+UI\Tooltip.lua
 UI\ItemButtonStyle.lua
 UI\OneBag.xml
 UI\OneBag.lua

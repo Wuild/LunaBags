@@ -6,15 +6,11 @@
         <Size x="36" y="36"/>
     </Button>
 
-    <Frame name="LunaBagsOneBagFrame" parent="UIParent" hidden="true" movable="true" enableMouse="true" clampedToScreen="true" frameStrata="HIGH">
+    <Frame name="LunaBagsOneBagFrame" parent="UIParent" hidden="true" movable="true" enableMouse="true" clampedToScreen="true" frameStrata="DIALOG">
         <Size x="520" y="500"/>
         <Anchors>
             <Anchor point="BOTTOMRIGHT" x="-34" y="126"/>
         </Anchors>
-        <Scripts>
-            <OnDragStart>self:StartMoving()</OnDragStart>
-            <OnDragStop>self:StopMovingOrSizing()</OnDragStop>
-        </Scripts>
         <Frames>
             <Frame parentKey="Header">
                 <Anchors>

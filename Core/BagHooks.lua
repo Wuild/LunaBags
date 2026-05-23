@@ -11,7 +11,10 @@ local BagHooks = {
 ns.BagHooks = BagHooks
 
 local function SafeScan()
-    if ns.BagData then
+    if ns.LunaBags and ns.LunaBags.UpdateCurrentCharacterCacheDeferred then
+        local includeBank = ns.BagData and ns.BagData.IsBankAvailable and ns.BagData:IsBankAvailable() or false
+        ns.LunaBags:UpdateCurrentCharacterCacheDeferred(includeBank == true, false)
+    elseif ns.BagData then
         ns.BagData:OnBagsUpdated()
     end
 end
@@ -92,10 +95,10 @@ function BagHooks:CloseBags(source)
     local now = GetTime and GetTime() or 0
     local bankOpenLatched = self.bankOpenLatchUntil and now <= self.bankOpenLatchUntil
     if source == "CloseAllBags" and (bankOpenLatched or (BankFrame and BankFrame:IsShown()) or (ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown())) then
-        return
+        return false
     end
     if not self.isOpen then
-        return
+        return false
     end
     self.isOpen = false
     if ns.OneBag then
@@ -106,6 +109,7 @@ function BagHooks:CloseBags(source)
     if LunaBags.db and LunaBags.db.profile.debug then
         LunaBags:Print(("Bags closed (%s)."):format(source or "unknown"))
     end
+    return true
 end
 
 function BagHooks:ToggleBags(source)
@@ -156,26 +160,13 @@ function BagHooks:EnableHooks()
     self.isHooked = true
     self:DisableBlizzardBags()
     if not self._originalOpenAllBags then self._originalOpenAllBags = _G.OpenAllBags end
-    if not self._originalCloseAllBags then self._originalCloseAllBags = _G.CloseAllBags end
     if not self._originalToggleAllBags then self._originalToggleAllBags = _G.ToggleAllBags end
     if not self._originalOpenBackpack then self._originalOpenBackpack = _G.OpenBackpack end
-    if not self._originalCloseBackpack then self._originalCloseBackpack = _G.CloseBackpack end
     if not self._originalToggleBackpack then self._originalToggleBackpack = _G.ToggleBackpack end
     if not self._originalToggleBag then self._originalToggleBag = _G.ToggleBag end
 
     _G.OpenAllBags = function(...)
         BagHooks:OpenBags("OpenAllBags")
-    end
-
-    _G.CloseAllBags = function(...)
-        if BagHooks.isOpen then
-            BagHooks:CloseBags("CloseAllBags")
-            return true
-        end
-        if BagHooks._originalCloseAllBags then
-            return BagHooks._originalCloseAllBags(...)
-        end
-        return false
     end
 
     _G.ToggleAllBags = function(...)
@@ -184,17 +175,6 @@ function BagHooks:EnableHooks()
 
     _G.OpenBackpack = function(...)
         BagHooks:OpenBags("OpenBackpack")
-    end
-
-    _G.CloseBackpack = function(...)
-        if BagHooks.isOpen then
-            BagHooks:CloseBags("CloseBackpack")
-            return true
-        end
-        if BagHooks._originalCloseBackpack then
-            return BagHooks._originalCloseBackpack(...)
-        end
-        return false
     end
 
     _G.ToggleBackpack = function(...)

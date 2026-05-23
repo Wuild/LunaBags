@@ -3,7 +3,5 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/Libs/Ace3" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/Bagnon" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/ElvUI" vcs="Git" />
   </component>
 </project>

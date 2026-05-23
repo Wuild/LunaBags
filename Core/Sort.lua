@@ -78,6 +78,33 @@ local CLASS_ORDER = {
     [CLASS_MISC] = 90,
 }
 
+local DEFAULT_SORT_RULES = {
+    { key = "priority", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "itemLevel", direction = "desc", enabled = true },
+    { key = "classOrder", direction = "asc", enabled = true },
+    { key = "classID", direction = "asc", enabled = true },
+    { key = "subClassID", direction = "asc", enabled = true },
+    { key = "equipLoc", direction = "asc", enabled = true },
+    { key = "name", direction = "asc", enabled = true },
+    { key = "itemID", direction = "asc", enabled = true },
+    { key = "count", direction = "desc", enabled = true },
+}
+
+local SORT_RULE_KEYS = {
+    priority = true,
+    quality = true,
+    itemLevel = true,
+    classOrder = true,
+    classID = true,
+    subClassID = true,
+    equipLoc = true,
+    name = true,
+    itemID = true,
+    count = true,
+    sellPrice = true,
+}
+
 local function Band(a, b)
     if bit and bit.band then return bit.band(a or 0, b or 0) end
     if bit32 and bit32.band then return bit32.band(a or 0, b or 0) end
@@ -138,6 +165,35 @@ local function IsReverseSlotOrder()
     local addon = ns and ns.LunaBags
     local sorting = addon and addon.db and addon.db.profile and addon.db.profile.sorting
     return sorting and sorting.reverseSlotOrder == true or false
+end
+
+local function GetSortRules()
+    local addon = ns and ns.LunaBags
+    local sorting = addon and addon.db and addon.db.profile and addon.db.profile.sorting
+    local configured = sorting and sorting.rules
+    local rules = {}
+
+    if type(configured) == "table" then
+        for _, rule in ipairs(configured) do
+            if type(rule) == "table" and rule.enabled ~= false and SORT_RULE_KEYS[rule.key] then
+                rules[#rules + 1] = {
+                    key = rule.key,
+                    direction = rule.direction == "desc" and "desc" or "asc",
+                }
+            end
+        end
+    end
+
+    if #rules == 0 then
+        for _, rule in ipairs(DEFAULT_SORT_RULES) do
+            rules[#rules + 1] = {
+                key = rule.key,
+                direction = rule.direction,
+            }
+        end
+    end
+
+    return rules
 end
 
 local function GetNumSlotsInBag(bagID)
@@ -323,17 +379,17 @@ local function BuildSlotData(bagID, slot, bagFamilyMask, bagSpecialtyClass, prio
     return data
 end
 
-local function ItemSort(a, b)
-    if a.priority ~= b.priority then return a.priority < b.priority end
-    if a.quality ~= b.quality then return a.quality > b.quality end
-    if a.itemLevel ~= b.itemLevel then return a.itemLevel > b.itemLevel end
-    if a.classOrder ~= b.classOrder then return a.classOrder < b.classOrder end
-    if a.classID ~= b.classID then return a.classID < b.classID end
-    if a.subClassID ~= b.subClassID then return a.subClassID < b.subClassID end
-    if a.equipLoc ~= b.equipLoc then return a.equipLoc < b.equipLoc end
-    if a.name ~= b.name then return a.name < b.name end
-    if a.itemID ~= b.itemID then return a.itemID < b.itemID end
-    if a.count ~= b.count then return a.count > b.count end
+local function ItemSortWithRules(a, b, rules)
+    for _, rule in ipairs(rules) do
+        local av = a[rule.key]
+        local bv = b[rule.key]
+        if av ~= bv then
+            if rule.direction == "desc" then
+                return av > bv
+            end
+            return av < bv
+        end
+    end
     return a.key < b.key
 end
 
@@ -395,7 +451,10 @@ local function AssignDesiredLayout(spaces)
         end
     end
 
-    table.sort(items, ItemSort)
+    local sortRules = GetSortRules()
+    table.sort(items, function(a, b)
+        return ItemSortWithRules(a, b, sortRules)
+    end)
 
     for _, space in ipairs(spaces) do
         if not space.locked and space.bagFamilyMask and space.bagFamilyMask > 0 then
@@ -500,33 +559,6 @@ local function FindBufferSpace(spaces, item)
         end
     end
     return nil
-end
-
-local function FindStackTarget(spaces, source)
-    return nil
-end
-
-local function FindStackTargetDisabled(spaces, source)
-    local best, bestFree
-    for _, target in ipairs(spaces) do
-        if target ~= source
-            and not target.locked
-            and not source.locked
-            and not target.item.empty
-            and not target.item.runtimeLocked
-            and target.item.itemKey == source.item.itemKey
-            and target.item.count < (target.item.maxStack or 1)
-            and target.item.itemKey ~= target.targetItem
-            and CanItemFitSpace(source.item, target)
-        then
-            local free = (target.item.maxStack or 1) - target.item.count
-            if not bestFree or free > bestFree then
-                best = target
-                bestFree = free
-            end
-        end
-    end
-    return best
 end
 
 local function FindCompatibleIncorrectSwap(spaces)
@@ -647,10 +679,6 @@ function Sorter:StepOnce()
 
     for _, source in ipairs(spaces) do
         if not source.locked and not source.item.runtimeLocked and not IsCorrect(source) and not source.item.empty then
-            local stackTarget = FindStackTarget(spaces, source)
-            if stackTarget and self:MoveItem(source, stackTarget) then
-                return "moved"
-            end
             local buffer = FindBufferSpace(spaces, source.item)
             if buffer and buffer.index < source.index and self:MoveItem(source, buffer) then
                 return "moved"

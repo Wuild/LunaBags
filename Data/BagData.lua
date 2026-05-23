@@ -56,6 +56,27 @@ function BagData:GetAllCharacters()
     return global.characters or {}
 end
 
+local function GetQuestItemFlagFromContainer(bagID, slot, itemInfo)
+    if itemInfo and itemInfo.isQuestItem == true then
+        return true
+    end
+
+    if CContainer and CContainer.GetContainerItemQuestInfo then
+        local questInfo = CContainer.GetContainerItemQuestInfo(bagID, slot)
+        if type(questInfo) == "table" then
+            return questInfo.isQuestItem == true
+        end
+        return questInfo == true
+    end
+
+    if GetContainerItemQuestInfo then
+        local isQuestItem = GetContainerItemQuestInfo(bagID, slot)
+        return isQuestItem == true
+    end
+
+    return false
+end
+
 local function BuildItemData(bagID, slot)
     if CContainer and CContainer.GetContainerItemInfo then
         local itemInfo = CContainer.GetContainerItemInfo(bagID, slot)
@@ -69,7 +90,7 @@ local function BuildItemData(bagID, slot)
             stackCount = itemInfo.stackCount or 1,
             quality = itemInfo.quality,
             isBound = itemInfo.isBound,
-            isQuestItem = itemInfo.isQuestItem,
+            isQuestItem = GetQuestItemFlagFromContainer(bagID, slot, itemInfo),
             iconFileID = itemInfo.iconFileID,
         }
     end
@@ -86,7 +107,7 @@ local function BuildItemData(bagID, slot)
         stackCount = count or 1,
         quality = quality,
         isBound = nil,
-        isQuestItem = nil,
+        isQuestItem = GetQuestItemFlagFromContainer(bagID, slot, nil),
         iconFileID = texture,
         isLocked = locked,
     }
@@ -95,21 +116,28 @@ end
 local function ScanBagList(target, bagIDs)
     local capacity = 0
     for _, bagID in ipairs(bagIDs) do
-        local slotCount
-        if CContainer and CContainer.GetContainerNumSlots then
-            slotCount = CContainer.GetContainerNumSlots(bagID)
-        else
-            slotCount = GetContainerNumSlots(bagID)
-        end
-        slotCount = slotCount or 0
-        capacity = capacity + slotCount
-        local bagData = { size = slotCount, slots = {} }
-        for slot = 1, slotCount do
-            bagData.slots[slot] = BuildItemData(bagID, slot)
-        end
-        target[bagID] = bagData
+        capacity = capacity + (BagData:ScanSingleBag(target, bagID) or 0)
     end
     return capacity
+end
+
+function BagData:ScanSingleBag(target, bagID)
+    if type(target) ~= "table" then
+        return 0
+    end
+    local slotCount
+    if CContainer and CContainer.GetContainerNumSlots then
+        slotCount = CContainer.GetContainerNumSlots(bagID)
+    else
+        slotCount = GetContainerNumSlots(bagID)
+    end
+    slotCount = slotCount or 0
+    local bagData = { size = slotCount, slots = {} }
+    for slot = 1, slotCount do
+        bagData.slots[slot] = BuildItemData(bagID, slot)
+    end
+    target[bagID] = bagData
+    return slotCount
 end
 
 local function GetCachedBagCapacity(bags)
@@ -126,6 +154,7 @@ local function GetCachedBagCapacity(bags)
 end
 
 function BagData:ScanBags(includeBank)
+    self._scanToken = (self._scanToken or 0) + 1
     local character = EnsureCharacterRecord()
     if not character then
         return
@@ -155,6 +184,95 @@ function BagData:ScanBags(includeBank)
             character.bank = prevBank or {}
         end
     end
+end
+
+function BagData:ScanBagsDeferred(includeBank, onDone)
+    if not CreateFrame then
+        self:ScanBags(includeBank)
+        if type(onDone) == "function" then
+            onDone()
+        end
+        return
+    end
+
+    self._scanToken = (self._scanToken or 0) + 1
+    local token = self._scanToken
+    local character = EnsureCharacterRecord()
+    if not character then
+        if type(onDone) == "function" then
+            onDone()
+        end
+        return
+    end
+
+    character.lastUpdate = time()
+    character.bags = character.bags or {}
+    character.bank = character.bank or {}
+
+    local job = {
+        token = token,
+        includeBank = includeBank == true,
+        character = character,
+        prevBags = character.bags,
+        prevBank = character.bank,
+        newBags = {},
+        newBank = {},
+        bagIndex = 1,
+        bankIndex = 1,
+        bagCapacity = 0,
+        bankCapacity = 0,
+        onDone = onDone,
+    }
+    self._scanJob = job
+
+    if not self._scanFrame then
+        self._scanFrame = CreateFrame("Frame")
+    end
+
+    self._scanFrame:SetScript("OnUpdate", function(frame)
+        local current = BagData._scanJob
+        if not current or current.token ~= BagData._scanToken then
+            frame:SetScript("OnUpdate", nil)
+            return
+        end
+
+        if current.bagIndex <= #BAG_IDS then
+            local bagID = BAG_IDS[current.bagIndex]
+            current.bagCapacity = current.bagCapacity + (BagData:ScanSingleBag(current.newBags, bagID) or 0)
+            current.bagIndex = current.bagIndex + 1
+            return
+        end
+
+        if current.includeBank and current.bankIndex <= #BANK_BAG_IDS then
+            local bagID = BANK_BAG_IDS[current.bankIndex]
+            current.bankCapacity = current.bankCapacity + (BagData:ScanSingleBag(current.newBank, bagID) or 0)
+            current.bankIndex = current.bankIndex + 1
+            return
+        end
+
+        local prevCapacity = GetCachedBagCapacity(current.prevBags)
+        if current.bagCapacity > 0 or prevCapacity <= 0 then
+            current.character.bags = current.newBags
+        else
+            current.character.bags = current.prevBags or {}
+        end
+
+        if current.includeBank then
+            local prevBankCapacity = GetCachedBagCapacity(current.prevBank)
+            if current.bankCapacity > 0 or prevBankCapacity <= 0 then
+                current.character.bank = current.newBank
+            else
+                current.character.bank = current.prevBank or {}
+            end
+        end
+
+        current.character.lastUpdate = time()
+        BagData._scanJob = nil
+        frame:SetScript("OnUpdate", nil)
+        if type(current.onDone) == "function" then
+            current.onDone()
+        end
+    end)
 end
 
 function BagData:UpdateCurrentMoney()

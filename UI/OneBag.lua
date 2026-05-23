@@ -24,7 +24,131 @@ local OneBag = {
 
 ns.OneBag = OneBag
 
-local PLAYER_BAGS = { 0, 1, 2, 3, 4 }
+local BAG_FRAME_STRATA = "DIALOG"
+local BAG_FRAME_LEVEL = 40
+
+local function EnsureStackSplitFrameAboveBags()
+    local splitFrame = _G.StackSplitFrame
+    if not splitFrame then
+        return
+    end
+    splitFrame:SetFrameStrata("TOOLTIP")
+    splitFrame:SetFrameLevel(BAG_FRAME_LEVEL + 120)
+end
+
+local function ApplyBagFrameLayering(frame)
+    if not frame then
+        return
+    end
+    frame:SetFrameStrata(BAG_FRAME_STRATA)
+    frame:SetFrameLevel(BAG_FRAME_LEVEL)
+    if frame.SetToplevel then
+        frame:SetToplevel(true)
+    end
+    if frame.content then
+        frame.content:SetFrameLevel(BAG_FRAME_LEVEL + 5)
+    end
+    if frame.Content then
+        frame.Content:SetFrameLevel(BAG_FRAME_LEVEL + 5)
+    end
+    if frame.BagSlots then
+        frame.BagSlots:SetFrameLevel(BAG_FRAME_LEVEL + 6)
+    end
+    if frame.SearchPanel then
+        frame.SearchPanel:SetFrameLevel(BAG_FRAME_LEVEL + 10)
+    end
+    if frame.KeyringPanel then
+        frame.KeyringPanel:SetFrameLevel(BAG_FRAME_LEVEL + 4)
+    end
+    if frame.CloseButton then
+        frame.CloseButton:SetFrameLevel(BAG_FRAME_LEVEL + 15)
+    end
+    if frame.Header then
+        frame.Header:SetFrameLevel(BAG_FRAME_LEVEL + 10)
+    end
+    if frame.RailToggleButton then
+        frame.RailToggleButton:SetFrameLevel(BAG_FRAME_LEVEL + 15)
+    end
+    if frame.SettingsButton then
+        frame.SettingsButton:SetFrameLevel(BAG_FRAME_LEVEL + 15)
+    end
+    if frame.CharacterButton then
+        frame.CharacterButton:SetFrameLevel(BAG_FRAME_LEVEL + 15)
+    end
+end
+
+local function IsDebugEnabled()
+    local addon = ns.LunaBags
+    return addon and addon.db and addon.db.profile and addon.db.profile.debug == true
+end
+
+local function Clamp01(value, fallback)
+    value = tonumber(value)
+    if value == nil then return fallback end
+    if value < 0 then return 0 end
+    if value > 1 then return 1 end
+    return value
+end
+
+local function GetColorValue(color, r, g, b)
+    if type(color) ~= "table" then
+        return r, g, b
+    end
+    return tonumber(color.r or color[1]) or r,
+        tonumber(color.g or color[2]) or g,
+        tonumber(color.b or color[3]) or b
+end
+
+local function GetAppearanceConfig(cfg)
+    local profile = ns.LunaBags and ns.LunaBags.db and ns.LunaBags.db.profile
+    local shared = profile and profile.ui or nil
+    if type(shared) == "table" then
+        local merged = {}
+        if type(cfg) == "table" then
+            for k, v in pairs(cfg) do
+                merged[k] = v
+            end
+        end
+        for k, v in pairs(shared) do
+            merged[k] = v
+        end
+        return merged
+    end
+    return cfg or {}
+end
+
+local function ApplyWindowAppearance(frame, cfg)
+    if not frame then
+        return
+    end
+    cfg = GetAppearanceConfig(cfg)
+    local wr, wg, wb = GetColorValue(cfg.windowColor, 0.12, 0.12, 0.12)
+    local hr, hg, hb = GetColorValue(cfg.headerColor, 0.07, 0.07, 0.07)
+    local windowOpacity = Clamp01(cfg.windowOpacity, 0.72)
+    local headerOpacity = Clamp01(cfg.headerOpacity, 0.78)
+
+    if frame.WindowBg then
+        frame.WindowBg:SetVertexColor(wr, wg, wb, windowOpacity)
+    end
+    if frame.TitleBarBg then
+        frame.TitleBarBg:SetVertexColor(hr, hg, hb, headerOpacity)
+    end
+    if frame.DarkInset then
+        frame.DarkInset:SetVertexColor(wr * 0.18, wg * 0.18, wb * 0.18, math.min(1, windowOpacity * 0.9))
+    end
+    if frame.StatusBg then
+        frame.StatusBg:SetVertexColor(wr * 0.85, wg * 0.85, wb * 0.85, math.min(1, windowOpacity * 0.95))
+    end
+    if frame.SearchPanel then
+        frame.SearchPanel:SetBackdropColor(wr * 0.7, wg * 0.7, wb * 0.7, math.min(1, windowOpacity * 0.95))
+    end
+    if frame.BagSlots then
+        frame.BagSlots:SetBackdropColor(wr * 0.7, wg * 0.7, wb * 0.7, math.min(1, windowOpacity))
+    end
+    if frame.KeyringPanel then
+        frame.KeyringPanel:SetBackdropColor(wr * 0.25, wg * 0.25, wb * 0.25, math.min(1, windowOpacity))
+    end
+end
 
 local function EnsureVisibleBagDefaults(state)
     for bagID = 0, 4 do
@@ -175,7 +299,7 @@ local function FormatMoneyText(money, iconSize)
     local copper = amount % 100
 
     local function Coin(path)
-        return ("|T%s:%d:%d:0:-1|t"):format(path, size, size)
+        return ("|T%s:%d:%d:0:2|t"):format(path, size, size)
     end
 
     local parts = {}
@@ -189,22 +313,27 @@ local function FormatMoneyText(money, iconSize)
     return table.concat(parts, "  ")
 end
 
-local function EnsureTooltipPostHook()
-    if OneBag.tooltipHooked then
-        return
+local function CountSlotUsage(slots)
+    local used, total = 0, 0
+    for _, entry in ipairs(slots or {}) do
+        if not entry.virtualEmpty then
+            total = total + 1
+            if entry.item then
+                used = used + 1
+            end
+        end
     end
-    OneBag.tooltipHooked = true
-    GameTooltip:HookScript("OnTooltipSetItem", function(tt)
-        local itemID = OneBag.hoveredItemID
-        local _, link = tt:GetItem()
-        if not itemID and link then
-            itemID = tonumber(link:match("item:(%d+)"))
-        end
-        if not itemID then
-            return
-        end
-        AddCharacterItemCountTooltip(itemID, link)
-    end)
+    return used, total
+end
+
+local function FormatSlotUsageText(used, total)
+    return ("%d/%d"):format(tonumber(used) or 0, tonumber(total) or 0)
+end
+
+local function EnsureTooltipPostHook()
+    if ns.Tooltip and ns.Tooltip.EnsureHooks then
+        ns.Tooltip:EnsureHooks()
+    end
 end
 
 local function ApplyTestButtonStyle(button)
@@ -693,6 +822,9 @@ local function EnsureItemCooldown(button)
     cd = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cd:SetAllPoints(button)
     button.cooldown = cd
+    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+        ns.ItemButtonStyle.ApplyTextStyle(button)
+    end
     return cd
 end
 
@@ -798,10 +930,29 @@ function OneBag:SetBagSlotPreview(bagID)
         if button and button:IsShown() then
             if bagID == nil then
                 button:SetAlpha(button._baseAlpha or 1)
+                if button.StyleBorder then
+                    button.StyleBorder:SetBackdropBorderColor(
+                        button.StyleBorderBaseR or 0.34,
+                        button.StyleBorderBaseG or 0.34,
+                        button.StyleBorderBaseB or 0.34,
+                        button.StyleBorderBaseA or 0.95
+                    )
+                end
             elseif button.bagID == bagID then
                 button:SetAlpha(1)
+                if button.StyleBorder then
+                    button.StyleBorder:SetBackdropBorderColor(0.95, 0.78, 0.24, 1)
+                end
             else
-                button:SetAlpha(0.22)
+                button:SetAlpha(math.max(0.55, (button._baseAlpha or 1) * 0.65))
+                if button.StyleBorder then
+                    button.StyleBorder:SetBackdropBorderColor(
+                        button.StyleBorderBaseR or 0.34,
+                        button.StyleBorderBaseG or 0.34,
+                        button.StyleBorderBaseB or 0.34,
+                        math.min(button.StyleBorderBaseA or 0.95, 0.55)
+                    )
+                end
             end
         end
     end
@@ -820,14 +971,21 @@ function OneBag:CreateFrame()
         frame:SetMovable(true)
         frame:EnableMouse(true)
         frame:SetClampedToScreen(true)
-        frame:SetFrameStrata("HIGH")
+        frame:SetFrameStrata(BAG_FRAME_STRATA)
+        frame:SetFrameLevel(BAG_FRAME_LEVEL)
+        if frame.SetToplevel then
+            frame:SetToplevel(true)
+        end
         frame:Hide()
         frame.content = CreateFrame("Frame", nil, frame)
+        frame.content:SetFrameLevel(BAG_FRAME_LEVEL + 5)
         frame.content:SetPoint("TOPLEFT", 8, -48)
         frame.content:SetPoint("BOTTOMRIGHT", -8, 36)
         frame.moneyText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         frame.moneyText:SetPoint("BOTTOMRIGHT", -16, 16)
     end
+    ApplyBagFrameLayering(frame)
+    EnsureStackSplitFrameAboveBags()
     EnsureVisibleBagDefaults(self.visibleBags)
     if UISpecialFrames and frame.GetName then
         local frameName = frame:GetName()
@@ -842,21 +1000,10 @@ function OneBag:CreateFrame()
             table.insert(UISpecialFrames, frameName)
         end
     end
-    frame:RegisterForDrag("LeftButton")
-    frame:EnableKeyboard(true)
-    frame:SetPropagateKeyboardInput(true)
-    frame:SetScript("OnKeyDown", function(f, key)
-        if key == "ESCAPE" then
-            if f.SetPropagateKeyboardInput then
-                f:SetPropagateKeyboardInput(false)
-            end
-            LunaBagsOneBag_Close()
-            return
-        end
-        if f.SetPropagateKeyboardInput then
-            f:SetPropagateKeyboardInput(true)
-        end
-    end)
+    frame:RegisterForDrag()
+    frame:SetScript("OnDragStart", nil)
+    frame:EnableKeyboard(false)
+    frame:SetScript("OnKeyDown", nil)
     frame:SetScript("OnDragStop", function(f)
         f:StopMovingOrSizing()
         OneBag:SavePosition()
@@ -889,21 +1036,38 @@ function OneBag:CreateFrame()
         frame.TitleBarBg:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
         frame.TitleBarBg:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
         frame.TitleBarBg:SetHeight(28)
-        frame.TitleBarBg:SetVertexColor(0.07, 0.07, 0.07, 0.78)
     end
+    if not frame.HeaderDrag then
+        frame.HeaderDrag = CreateFrame("Frame", nil, frame)
+        frame.HeaderDrag:EnableMouse(true)
+        frame.HeaderDrag:RegisterForDrag("LeftButton")
+        frame.HeaderDrag:SetScript("OnDragStart", function()
+            if OneBag.frame and OneBag.frame:IsMovable() then
+                OneBag.frame:StartMoving()
+            end
+        end)
+        frame.HeaderDrag:SetScript("OnDragStop", function()
+            if OneBag.frame then
+                OneBag.frame:StopMovingOrSizing()
+                OneBag:SavePosition()
+            end
+        end)
+    end
+    frame.HeaderDrag:ClearAllPoints()
+    frame.HeaderDrag:SetPoint("TOPLEFT", frame.TitleBarBg, "TOPLEFT", 0, 0)
+    frame.HeaderDrag:SetPoint("BOTTOMRIGHT", frame.TitleBarBg, "BOTTOMRIGHT", 0, 0)
+    frame.HeaderDrag:SetFrameLevel(BAG_FRAME_LEVEL + 8)
     if not frame.DarkInset then
         frame.DarkInset = frame:CreateTexture(nil, "BORDER")
         frame.DarkInset:SetTexture("Interface\\Buttons\\WHITE8X8")
         frame.DarkInset:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -29)
         frame.DarkInset:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 38)
-        frame.DarkInset:SetVertexColor(0.02, 0.02, 0.02, 0.64)
     end
     if not frame.StatusBg then
         frame.StatusBg = frame:CreateTexture(nil, "ARTWORK")
         frame.StatusBg:SetTexture("Interface\\Buttons\\WHITE8X8")
         frame.StatusBg:SetPoint("TOPLEFT", frame.DarkInset, "BOTTOMLEFT", 0, 0)
         frame.StatusBg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
-        frame.StatusBg:SetVertexColor(0.10, 0.10, 0.10, 0.70)
     end
     if not frame.OuterBorder then
         frame.OuterBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -957,18 +1121,35 @@ function OneBag:CreateFrame()
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
         b:SetSize(18, 18)
         b:SetScript("OnClick", LunaBagsOneBag_SearchToggleClicked)
+        b:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Search")
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
         b:ClearAllPoints()
         b:SetPoint("LEFT", frame.TitleBarBg, "LEFT", 49, 0)
     end
     if frame.Header and frame.Header.SortButton then
         local b = frame.Header.SortButton
         b:SetText("")
-        b:SetNormalTexture("Interface\\AddOns\\LunaBags\\external\\Bagnon\\art\\broom")
-        b:SetPushedTexture("Interface\\AddOns\\LunaBags\\external\\Bagnon\\art\\broom")
+        b:SetNormalTexture("Interface\\AddOns\\LunaBags\\Art\\broom")
+        b:SetPushedTexture("Interface\\AddOns\\LunaBags\\Art\\broom")
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
         b:SetSize(18, 18)
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         b:SetScript("OnClick", LunaBagsOneBag_SortButtonClicked)
+        b:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Sort")
+            GameTooltip:AddLine("Right-click for lock mode.", 0.85, 0.85, 0.85)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
         b:ClearAllPoints()
         b:SetPoint("LEFT", frame.TitleBarBg, "LEFT", 71, 0)
     end
@@ -993,7 +1174,7 @@ function OneBag:CreateFrame()
         else
             b.Icon:SetTexCoord(0, 1, 0, 1)
         end
-        b:SetScript("OnClick", function(btn)
+        b:SetScript("OnClick", function()
             if not LunaBagsCharacterMenu then
                 CreateFrame("Frame", "LunaBagsCharacterMenu", UIParent, "UIDropDownMenuTemplate")
             end
@@ -1092,6 +1273,14 @@ function OneBag:CreateFrame()
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square")
         b:SetSize(18, 18)
         b:SetScript("OnClick", LunaBagsOneBag_RailToggleClicked)
+        b:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Toggle Bag Rail")
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
         b:ClearAllPoints()
         b:SetPoint("LEFT", frame.TitleBarBg, "LEFT", 27, 0)
     end
@@ -1110,7 +1299,11 @@ function OneBag:CreateFrame()
             local tex = frame.MoneyBar:GetStatusBarTexture()
             if tex then tex:SetAlpha(0) end
         end
-        if frame.MoneyBar.Label then frame.MoneyBar.Label:SetText("") end
+        if frame.MoneyBar.Label then
+            frame.MoneyBar.Label:SetFontObject("GameFontNormal")
+            frame.MoneyBar.Label:SetTextColor(1, 1, 1, 1)
+            frame.MoneyBar.Label:SetText("")
+        end
         if frame.MoneyBar.Text then
             frame.MoneyBar.Text:SetFontObject("GameFontNormal")
             frame.MoneyBar.Text:SetTextColor(1, 1, 1, 1)
@@ -1189,7 +1382,7 @@ function OneBag:CreateFrame()
     end
 
     if frame.Content then
-        frame.Content:SetFrameLevel(frame:GetFrameLevel() + 3)
+        frame.Content:SetFrameLevel(BAG_FRAME_LEVEL + 5)
     end
 
     if not frame.KeyringPanel then
@@ -1207,6 +1400,7 @@ function OneBag:CreateFrame()
     frame.KeyringPanel:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, 0)
 
     frame.BagSlotParents = frame.BagSlotParents or {}
+    ApplyBagFrameLayering(frame)
 
     self.frame = frame
     self:ApplySettings()
@@ -1440,6 +1634,9 @@ function OneBag:RefreshBagSlots()
     local shownCount = 0
     for i, bagID in ipairs(railBags) do
         local button = self:AcquireBagButton(i)
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+            ns.ItemButtonStyle.Apply(button)
+        end
         local showButton = not (bagID == KEYRING_CONTAINER and not self.keyringAvailable)
         if showButton then
             shownCount = shownCount + 1
@@ -1489,6 +1686,7 @@ function OneBag:RefreshBagSlots()
     local used = shownCount
     self.frame.BagSlots:SetWidth(pad * 2 + used * size + (used - 1) * spacing)
     self.frame.BagSlots:SetHeight(size + pad * 2)
+    ApplyWindowAppearance(self.frame, GetConfig())
 end
 
 function OneBag:AcquireButton(index)
@@ -1505,30 +1703,7 @@ function OneBag:AcquireButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBag_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBag_ItemButtonOnLeave)
-    if ContainerFrameItemButton_OnClick then
-        btn:SetScript("OnClick", function(self, mouseButton)
-            if not IsViewingCurrentCharacter() then
-                return
-            end
-            ContainerFrameItemButton_OnClick(self, mouseButton)
-        end)
-    end
-    if ContainerFrameItemButton_OnDrag then
-        btn:SetScript("OnDragStart", function(self)
-            if not IsViewingCurrentCharacter() then
-                return
-            end
-            ContainerFrameItemButton_OnDrag(self)
-        end)
-    end
-    if ContainerFrameItemButton_OnReceiveDrag then
-        btn:SetScript("OnReceiveDrag", function(self)
-            if not IsViewingCurrentCharacter() then
-                return
-            end
-            ContainerFrameItemButton_OnReceiveDrag(self)
-        end)
-    end
+    -- Preserve Blizzard secure item-button behavior from template scripts.
 
     local icon = btn.icon or _G[btn:GetName() .. "IconTexture"] or _G[btn:GetName() .. "Icon"]
     if not icon then
@@ -1656,10 +1831,12 @@ function LunaBagsOneBag_SearchToggleClicked()
         searchBox:SetFocus()
     else
         searchBox:ClearFocus()
-        searchBox:SetText("")
         OneBag.searchText = ""
-        OneBag:Refresh()
+        if searchBox:GetText() ~= "" then
+            searchBox:SetText("")
+        end
     end
+    OneBag:Refresh()
 end
 
 function LunaBagsOneBag_SortClicked()
@@ -1777,6 +1954,15 @@ function LunaBagsOneBag_ItemButtonOnEnter(button)
     end
     if button.bagID and button.slot then
         GameTooltip:SetBagItem(button.bagID, button.slot)
+        if IsKeyringBag(button.bagID) and not GameTooltip:GetItem() then
+            local invSlot = KeyRingButtonIDToInvSlotID and KeyRingButtonIDToInvSlotID(button.slot)
+            if invSlot then
+                GameTooltip:SetInventoryItem("player", invSlot)
+            end
+            if not GameTooltip:GetItem() and button.itemData and button.itemData.itemLink then
+                GameTooltip:SetHyperlink(button.itemData.itemLink)
+            end
+        end
         if not OneBag.hoveredItemID then
             local _, link = GameTooltip:GetItem()
             if link then
@@ -1799,10 +1985,52 @@ function LunaBagsOneBag_ItemButtonOnLeave()
     GameTooltip:Hide()
 end
 
+local function GetItemDetails(itemLink, itemID, includeFullDetails)
+    local itemKey = itemLink or itemID
+    local itemName, _, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID
+    if includeFullDetails and itemKey and GetItemInfo then
+        itemName, _, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID = GetItemInfo(itemKey)
+    end
+
+    local getInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+    if getInstant and itemKey and (classID == nil or subClassID == nil or equipLoc == nil or itemTypeName == nil or subTypeName == nil) then
+        local _, instantTypeName, instantSubTypeName, instantEquipLoc, _, instantClassID, instantSubClassID = getInstant(itemKey)
+        itemTypeName = itemTypeName or instantTypeName
+        subTypeName = subTypeName or instantSubTypeName
+        equipLoc = equipLoc or instantEquipLoc
+        classID = classID or instantClassID
+        subClassID = subClassID or instantSubClassID
+    end
+
+    return itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID
+end
+
+local function GetQuestItemFlag(bagID, slot, itemInfo)
+    if itemInfo and itemInfo.isQuestItem == true then
+        return true
+    end
+
+    if C_Container and C_Container.GetContainerItemQuestInfo then
+        local questInfo = C_Container.GetContainerItemQuestInfo(bagID, slot)
+        if type(questInfo) == "table" then
+            return questInfo.isQuestItem == true
+        end
+        return questInfo == true
+    end
+
+    if GetContainerItemQuestInfo then
+        local isQuestItem = GetContainerItemQuestInfo(bagID, slot)
+        return isQuestItem == true
+    end
+
+    return false
+end
+
 function OneBag:BuildLiveSlots()
     local slots = {}
     local viewingCurrent = IsViewingCurrentCharacter()
-    local viewedCharacter = nil
+    local viewedCharacter
+    local includeFullDetails = self.searchText and self.searchText ~= ""
     if not viewingCurrent then
         viewedCharacter = GetViewedCharacterData()
     end
@@ -1810,8 +2038,8 @@ function OneBag:BuildLiveSlots()
     for bagID = 0, 4 do
         if self.visibleBags[bagID] ~= false and not IsKeyringBag(bagID) then
             local slotCount = 0
-            local cachedSlots = nil
-            local cachedBagData = nil
+            local cachedSlots
+            local cachedBagData
             if viewingCurrent then
                 slotCount = GetNumSlotsInBag(bagID)
             else
@@ -1830,17 +2058,26 @@ function OneBag:BuildLiveSlots()
                     itemLink = itemInfo and itemInfo.itemLink or nil
                 end
                 local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
-                local itemName = itemLink and GetItemInfo(itemLink) or nil
+                local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
+                    GetItemDetails(itemLink, itemID, includeFullDetails)
                 slots[#slots + 1] = {
                     bagID = bagID,
                     slot = slot,
                     item = itemInfo and {
                         iconFileID = itemInfo.iconFileID,
                         stackCount = itemInfo.stackCount,
-                        quality = itemInfo.quality,
+                        quality = itemInfo.quality or itemQuality,
+                        isQuestItem = viewingCurrent and GetQuestItemFlag(bagID, slot, itemInfo) or itemInfo.isQuestItem == true,
                         itemLink = itemLink,
                         itemID = itemID,
                         name = itemName,
+                        itemLevel = itemLevel,
+                        itemTypeName = itemTypeName,
+                        subTypeName = subTypeName,
+                        equipLoc = equipLoc,
+                        sellPrice = sellPrice,
+                        classID = classID,
+                        subClassID = subClassID,
                     } or nil,
                 }
             end
@@ -1863,25 +2100,43 @@ function OneBag:BuildKeyringSlots()
         return slots
     end
 
-    local slotCount = math.min(2, GetNumSlotsInBag(KEYRING_CONTAINER))
+    local includeFullDetails = self.searchText and self.searchText ~= ""
+    local slotCount = GetNumSlotsInBag(KEYRING_CONTAINER)
     for slot = 1, slotCount do
         local itemInfo = GetItemInfoFromBag(KEYRING_CONTAINER, slot)
-        local itemLink = itemInfo and GetItemLinkFromBag(KEYRING_CONTAINER, slot) or nil
-        local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or nil
-        local itemName = itemLink and GetItemInfo(itemLink) or nil
-        slots[#slots + 1] = {
-            bagID = KEYRING_CONTAINER,
-            slot = slot,
-            item = itemInfo and {
-                iconFileID = itemInfo.iconFileID,
-                stackCount = itemInfo.stackCount,
-                quality = itemInfo.quality,
-                itemLink = itemLink,
-                itemID = itemID,
-                name = itemName,
-            } or nil,
-        }
+        if itemInfo then
+            local itemLink = GetItemLinkFromBag(KEYRING_CONTAINER, slot)
+            local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or nil
+            local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
+                GetItemDetails(itemLink, itemID, includeFullDetails)
+            slots[#slots + 1] = {
+                bagID = KEYRING_CONTAINER,
+                slot = slot,
+                item = {
+                    iconFileID = itemInfo.iconFileID,
+                    stackCount = itemInfo.stackCount,
+                    quality = itemInfo.quality or itemQuality,
+                    isQuestItem = GetQuestItemFlag(KEYRING_CONTAINER, slot, itemInfo),
+                    itemLink = itemLink,
+                    itemID = itemID,
+                    name = itemName,
+                    itemLevel = itemLevel,
+                    itemTypeName = itemTypeName,
+                    subTypeName = subTypeName,
+                    equipLoc = equipLoc,
+                    sellPrice = sellPrice,
+                    classID = classID,
+                    subClassID = subClassID,
+                },
+            }
+        end
     end
+    slots[#slots + 1] = {
+        bagID = KEYRING_CONTAINER,
+        slot = slotCount + 1,
+        item = nil,
+        virtualEmpty = true,
+    }
 
     return slots
 end
@@ -1992,9 +2247,11 @@ function OneBag:Refresh()
         return
     end
     EnsureVisibleBagDefaults(self.visibleBags)
+    self:UpdateSearchLayout()
 
     local allSlots = self:BuildLiveSlots()
     local keySlots = self:BuildKeyringSlots()
+    local occupiedSlots, totalSlots = CountSlotUsage(allSlots)
     self:RefreshBagSlots()
     local searching = self.searchText and self.searchText ~= ""
     local readOnly = not IsViewingCurrentCharacter()
@@ -2032,10 +2289,48 @@ function OneBag:Refresh()
 
     local nonSplit = {}
     local splitSections = {}
+    local categorySections = {}
+    local categoryByID = {}
+    local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
+    local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
+    local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
+
+    if categoriesEnabled and ns.Categories then
+        for index, category in ipairs(ns.Categories:GetList("bags") or {}) do
+            if category.enabled ~= false then
+                local key = category.id or category.name or tostring(index)
+                local section = {
+                    title = category.name or ("Category " .. tostring(index)),
+                    entries = {},
+                    category = category,
+                    minSlots = tonumber(category.minSlots) or 0,
+                }
+                categoryByID[key] = section
+                categorySections[#categorySections + 1] = section
+            end
+        end
+    end
 
     for bagID = 0, 4 do
         if self.visibleBags[bagID] ~= false and not IsKeyringBag(bagID) then
             local bucket = bagBuckets[bagID] or {}
+            local remaining = {}
+            for _, entry in ipairs(bucket) do
+                local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bags") or nil
+                if category then
+                    local key = category.id or category.name or tostring(#categorySections + 1)
+                    local section = categoryByID[key]
+                    if not section then
+                        section = { title = category.name or "Category", entries = {}, category = category, minSlots = tonumber(category.minSlots) or 0 }
+                        categoryByID[key] = section
+                        categorySections[#categorySections + 1] = section
+                    end
+                    section.entries[#section.entries + 1] = entry
+                else
+                    remaining[#remaining + 1] = entry
+                end
+            end
+            bucket = remaining
             if self.splitByBagRows or IsBagSplitEnabled(bagID) then
                 table.sort(bucket, function(a, b)
                     local aHasItem = a and a.item ~= nil
@@ -2054,45 +2349,33 @@ function OneBag:Refresh()
         end
     end
 
-    for idx, entry in ipairs(nonSplit) do
-        local localIndex = idx - 1
-        positioned[#positioned + 1] = {
-            entry = entry,
-            col = localIndex % cols,
-            row = math.floor(localIndex / cols),
-        }
-    end
-
-    local usedRows = (#nonSplit > 0) and math.ceil(#nonSplit / cols) or 0
+    local usedRows = 0
     local extraYOffset = 0
-    local hasBaseContent = #positioned > 0
+    local hasBaseContent = false
+    local sectionHeaders = {}
+    local sectionEmptyLabels = {}
+    local sectionPlaceholders = {}
+    local sectionHeaderHeight = 14
 
-    for _, section in ipairs(splitSections) do
+    local function AddSection(section)
         local entries = section.entries or {}
-        if #entries > 0 then
-            if hasBaseContent then
-                extraYOffset = extraYOffset + bagSectionGapY
-            end
-            for idx, entry in ipairs(entries) do
-                local localIndex = idx - 1
-                positioned[#positioned + 1] = {
-                    entry = entry,
-                    col = localIndex % cols,
-                    row = usedRows + math.floor(localIndex / cols),
-                    yOffset = extraYOffset,
-                }
-            end
-            usedRows = usedRows + math.max(1, math.ceil(#entries / cols))
-            hasBaseContent = true
+        local minSlots = math.max(0, tonumber(section.minSlots) or 0)
+        local visibleSlots = math.max(#entries, minSlots)
+        if visibleSlots == 0 then
+            return
         end
-    end
-
-    -- Keyring is always split and always placed after non-split and split-bag sections.
-    if #keySlots > 0 then
         if hasBaseContent then
             extraYOffset = extraYOffset + bagSectionGapY
         end
-        for idx, entry in ipairs(keySlots) do
+        if section.title and section.title ~= "" then
+            sectionHeaders[#sectionHeaders + 1] = {
+                title = section.title,
+                row = usedRows,
+                yOffset = extraYOffset,
+            }
+            extraYOffset = extraYOffset + sectionHeaderHeight
+        end
+        for idx, entry in ipairs(entries) do
             local localIndex = idx - 1
             positioned[#positioned + 1] = {
                 entry = entry,
@@ -2101,8 +2384,133 @@ function OneBag:Refresh()
                 yOffset = extraYOffset,
             }
         end
-        usedRows = usedRows + math.max(1, math.ceil(#keySlots / cols))
+        for idx = #entries + 1, visibleSlots do
+            local localIndex = idx - 1
+            sectionPlaceholders[#sectionPlaceholders + 1] = {
+                col = localIndex % cols,
+                row = usedRows + math.floor(localIndex / cols),
+                yOffset = extraYOffset,
+            }
+        end
+        if #entries == 0 then
+            sectionEmptyLabels[#sectionEmptyLabels + 1] = {
+                text = "No items found",
+                row = usedRows,
+                yOffset = extraYOffset,
+                cols = math.min(cols, math.max(1, visibleSlots)),
+            }
+        end
+        usedRows = usedRows + math.max(1, math.ceil(visibleSlots / cols))
         hasBaseContent = true
+    end
+
+    local function AddCategoryGrid(sections)
+        if #sections == 0 then
+            return
+        end
+        if hasBaseContent then
+            extraYOffset = extraYOffset + bagSectionGapY
+        end
+
+        local gridGapCols = (categoryColumnCount > 1 and ((categoryColumnCount * 2 - 1) <= cols)) and 1 or 0
+        local sectionCols = math.max(1, math.floor((cols - ((categoryColumnCount - 1) * gridGapCols)) / categoryColumnCount))
+        local rowHeights = {}
+        local sectionLayouts = {}
+
+        for index, section in ipairs(sections) do
+            local gridCol = (index - 1) % categoryColumnCount
+            local gridRow = math.floor((index - 1) / categoryColumnCount)
+            local startCol = gridCol * (sectionCols + gridGapCols)
+            local entries = section.entries or {}
+            local minSlots = math.max(0, tonumber(section.minSlots) or 0)
+            local visibleSlots = (#entries == 0) and math.max(1, minSlots) or math.max(#entries, minSlots)
+            local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
+            local sectionHeight = sectionHeaderHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
+            rowHeights[gridRow] = math.max(rowHeights[gridRow] or 0, sectionHeight)
+            sectionLayouts[#sectionLayouts + 1] = {
+                section = section,
+                gridRow = gridRow,
+                startCol = startCol,
+                entries = entries,
+                visibleSlots = visibleSlots,
+            }
+        end
+
+        for _, layout in ipairs(sectionLayouts) do
+            local priorOffset = 0
+            for row = 0, layout.gridRow - 1 do
+                priorOffset = priorOffset + (rowHeights[row] or 0) + bagSectionGapY
+            end
+            local section = layout.section
+            local entries = layout.entries
+            local startCol = layout.startCol
+            local visibleSlots = layout.visibleSlots
+            local startRow = usedRows
+            local headerOffset = extraYOffset + priorOffset
+
+            if section.title and section.title ~= "" then
+                sectionHeaders[#sectionHeaders + 1] = {
+                    title = section.title,
+                    row = startRow,
+                    yOffset = headerOffset,
+                    col = startCol,
+                    cols = sectionCols,
+                }
+                headerOffset = headerOffset + sectionHeaderHeight
+            end
+
+            for idx, entry in ipairs(entries) do
+                local localIndex = idx - 1
+                positioned[#positioned + 1] = {
+                    entry = entry,
+                    col = startCol + (localIndex % sectionCols),
+                    row = startRow + math.floor(localIndex / sectionCols),
+                    yOffset = headerOffset,
+                }
+            end
+            for idx = #entries + 1, visibleSlots do
+                local localIndex = idx - 1
+                sectionPlaceholders[#sectionPlaceholders + 1] = {
+                    col = startCol + (localIndex % sectionCols),
+                    row = startRow + math.floor(localIndex / sectionCols),
+                    yOffset = headerOffset,
+                }
+            end
+            if #entries == 0 then
+                sectionEmptyLabels[#sectionEmptyLabels + 1] = {
+                    text = "No items found",
+                    row = startRow,
+                    yOffset = headerOffset,
+                    col = startCol,
+                    cols = sectionCols,
+                }
+            end
+        end
+
+        local totalHeight = 0
+        local rowIndex = 0
+        while rowHeights[rowIndex] do
+            if rowIndex > 0 then
+                totalHeight = totalHeight + bagSectionGapY
+            end
+            totalHeight = totalHeight + rowHeights[rowIndex]
+            rowIndex = rowIndex + 1
+        end
+        extraYOffset = extraYOffset + math.max(sectionHeaderHeight + size, totalHeight)
+        hasBaseContent = true
+    end
+
+    AddSection({ entries = nonSplit })
+
+    for _, section in ipairs(splitSections) do
+        AddSection(section)
+    end
+
+    AddCategoryGrid(categorySections)
+
+    -- Keyring is always split and always placed after non-split, split-bag, and category sections.
+    if #keySlots > 0 then
+        AddSection({ title = KEYRING or "Keyring", entries = keySlots })
     end
 
     rows = math.max(1, usedRows)
@@ -2118,6 +2526,22 @@ function OneBag:Refresh()
             maxBottom = bottom
         end
     end
+    for _, p in ipairs(sectionPlaceholders) do
+        local row = p.row or 0
+        local yOff = p.yOffset or 0
+        local bottom = gridInsetY + row * (size + spacing) + yOff + size
+        if bottom > maxBottom then
+            maxBottom = bottom
+        end
+    end
+    for _, label in ipairs(sectionEmptyLabels) do
+        local row = label.row or 0
+        local yOff = label.yOffset or 0
+        local bottom = gridInsetY + row * (size + spacing) + yOff + size
+        if bottom > maxBottom then
+            maxBottom = bottom
+        end
+    end
     if maxBottom <= 0 then
         maxBottom = gridInsetY + size
     end
@@ -2125,11 +2549,81 @@ function OneBag:Refresh()
     frameHeight = math.max(200, contentHeight + frameVerticalChrome)
     self.frame:SetSize(frameWidth, frameHeight)
 
+    self.sectionHeaders = self.sectionHeaders or {}
+    for i, header in ipairs(sectionHeaders) do
+        local fs = self.sectionHeaders[i]
+        if not fs then
+            fs = self.frame.content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetJustifyH("LEFT")
+            self.sectionHeaders[i] = fs
+        end
+        fs:SetText(header.title)
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (header.col or 0) * (size + spacing), -gridInsetY - (header.row or 0) * (size + spacing) - (header.yOffset or 0))
+        if header.cols then
+            fs:SetWidth(header.cols * size + math.max(0, header.cols - 1) * spacing)
+        else
+            fs:SetWidth(gridWidth)
+        end
+        fs:Show()
+    end
+    for i = #sectionHeaders + 1, #(self.sectionHeaders or {}) do
+        self.sectionHeaders[i]:Hide()
+    end
+
+    self.sectionPlaceholders = self.sectionPlaceholders or {}
+    for i, placeholder in ipairs(sectionPlaceholders) do
+        local frame = self.sectionPlaceholders[i]
+        if not frame then
+            frame = CreateFrame("Frame", nil, self.frame.content, "BackdropTemplate")
+            frame:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8X8",
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                edgeSize = 1,
+            })
+            frame:SetBackdropBorderColor(0.18, 0.18, 0.18, 0.5)
+            self.sectionPlaceholders[i] = frame
+        end
+        frame:SetFrameLevel((self.frame.content and self.frame.content:GetFrameLevel() or 45) + 1)
+        frame:SetSize(size, size)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (placeholder.col or 0) * (size + spacing), -gridInsetY - (placeholder.row or 0) * (size + spacing) - (placeholder.yOffset or 0))
+        frame:SetBackdropColor(0.03, 0.03, 0.03, 0.35)
+        frame:Show()
+    end
+    for i = #sectionPlaceholders + 1, #(self.sectionPlaceholders or {}) do
+        self.sectionPlaceholders[i]:Hide()
+    end
+
+    self.sectionEmptyLabels = self.sectionEmptyLabels or {}
+    for i, label in ipairs(sectionEmptyLabels) do
+        local fs = self.sectionEmptyLabels[i]
+        if not fs then
+            fs = self.frame.content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            fs:SetJustifyH("CENTER")
+            fs:SetJustifyV("MIDDLE")
+            self.sectionEmptyLabels[i] = fs
+        end
+        local labelCols = math.max(1, tonumber(label.cols) or 1)
+        fs:SetText(label.text or "No items found")
+        fs:SetWidth(labelCols * size + math.max(0, labelCols - 1) * spacing)
+        fs:SetHeight(size)
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (label.col or 0) * (size + spacing), -gridInsetY - (label.row or 0) * (size + spacing) - (label.yOffset or 0))
+        fs:Show()
+    end
+    for i = #sectionEmptyLabels + 1, #(self.sectionEmptyLabels or {}) do
+        self.sectionEmptyLabels[i]:Hide()
+    end
+
     used = #positioned
     local usingReadonlyButtons = readOnly
     for i = 1, used do
         local button = usingReadonlyButtons and self:AcquireReadonlyButton(i) or self:AcquireButton(i)
         button:SetSize(size, size)
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+            ns.ItemButtonStyle.Apply(button)
+        end
         local p = positioned[i]
         local col = p.col
         local row = p.row
@@ -2149,9 +2643,12 @@ function OneBag:Refresh()
         button.SlotID = info.slot
         button:SetID(info.slot)
         button.itemData = info.item
-        if button.DebugSlotText then
+        button.virtualEmpty = info.virtualEmpty == true
+        if button.DebugSlotText and IsDebugEnabled() then
             button.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
             button.DebugSlotText:Show()
+        elseif button.DebugSlotText then
+            button.DebugSlotText:Hide()
         end
 
         if info.item then
@@ -2201,11 +2698,11 @@ function OneBag:Refresh()
             button._baseAlpha = alpha
         end
         UpdateButtonStyleBorderForItem(button, info.item)
-        if ns.Plugins then
+        if ns.Plugins and not button.virtualEmpty then
             ns.Plugins:Apply(button, info, "oneBag")
         end
         local lockCross = EnsureLockedCross(button)
-        if self.lockSlotsMode and IsSlotUserLocked(info.bagID, info.slot) then
+        if (not button.virtualEmpty) and self.lockSlotsMode and IsSlotUserLocked(info.bagID, info.slot) then
             lockCross:Show()
             lockCross.d1:Show()
             lockCross.d2:Show()
@@ -2217,9 +2714,9 @@ function OneBag:Refresh()
         if button.icon and button.icon.SetDesaturated then
             button.icon:SetDesaturated(self.sortingActive == true)
         end
-        button:EnableMouse((self.sortingActive ~= true) and ((not readOnly) or usingReadonlyButtons))
+        button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and ((not readOnly) or usingReadonlyButtons))
         if button.LockOverlay then
-            if self.lockSlotsMode and not self.sortingActive and not readOnly then
+            if (not button.virtualEmpty) and self.lockSlotsMode and not self.sortingActive and not readOnly then
                 button.LockOverlay:Show()
             else
                 button.LockOverlay:Hide()
@@ -2293,6 +2790,9 @@ function OneBag:Refresh()
         self.frame.moneyText:SetText(FormatMoneyText(money, 14))
     end
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
+        if self.frame.MoneyBar.Label then
+            self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+        end
         if readOnly and OneBag.viewCharacterKey and ns.BagData then
             local viewed = GetViewedCharacterData()
             local vMoney = tonumber(viewed and viewed.money) or 0
@@ -2357,11 +2857,12 @@ function OneBag:ApplySettings()
         self.frame:SetScale(math.max(0.7, math.min(1.5, tonumber(cfg.scale) or 1)))
         self.frame:SetMovable(not cfg.locked)
         self.frame:EnableMouse(true)
-        if cfg.locked then
-            self.frame:RegisterForDrag()
-        else
-            self.frame:RegisterForDrag("LeftButton")
+        self.frame:RegisterForDrag()
+        if self.frame.HeaderDrag then
+            self.frame.HeaderDrag:EnableMouse(not cfg.locked)
+            self.frame.HeaderDrag:SetShown(not cfg.locked)
         end
+        ApplyWindowAppearance(self.frame, cfg)
         if self.frame.RailToggleButton then
             self.frame.RailToggleButton:SetAlpha(self.showBagRail and 1 or 0.6)
         end
@@ -2399,8 +2900,13 @@ function OneBag:Show()
     self:CreateFrame()
     self.viewCharacterKey = nil
     self:ApplySettings()
-    self:Refresh()
+    EnsureStackSplitFrameAboveBags()
     self.frame:Show()
+    if ns.LunaBags and ns.LunaBags.QueueOpenWindowRefresh then
+        ns.LunaBags:QueueOpenWindowRefresh()
+    else
+        self:Refresh()
+    end
 end
 
 function OneBag:Hide()

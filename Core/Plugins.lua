@@ -69,6 +69,12 @@ local function ResolveQualityBorderColor(quality)
     return 0.34, 0.34, 0.34, 0.95
 end
 
+local function IsQuestItem(item)
+    -- Item class "Quest" includes repeatable turn-in items such as Mark of Sargeras.
+    -- Only Blizzard's per-slot quest flag should trigger the quest border.
+    return item and item.isQuestItem == true
+end
+
 local function EnsureTrashIcon(button)
     if button.trashIcon then
         return button.trashIcon
@@ -76,7 +82,7 @@ local function EnsureTrashIcon(button)
     local icon = button:CreateTexture(nil, "OVERLAY")
     icon:SetSize(13, 13)
     icon:SetPoint("TOPLEFT", button, "TOPLEFT", 3, -3)
-    icon:SetTexture("Interface\\MoneyFrame\\UI-CopperIcon")
+    icon:SetTexture("Interface\\MoneyFrame\\UI-GoldIcon")
     icon:Hide()
     button.trashIcon = icon
     return icon
@@ -91,17 +97,32 @@ Plugins:Register("qualityBorder", {
 
         local item = entry and entry.item
         local quality = enabled and item and item.quality or nil
+        local isQuestItem = false
+
         if enabled and quality == nil and item and item.itemLink and GetItemInfo then
             local _, _, q = GetItemInfo(item.itemLink)
             quality = q
         end
+
+        isQuestItem = enabled and IsQuestItem(item) or false
+
         local r, g, b, a = ResolveQualityBorderColor(quality)
 
-        button.StyleBorderBaseR = r
-        button.StyleBorderBaseG = g
-        button.StyleBorderBaseB = b
-        button.StyleBorderBaseA = a
-        button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
+        if isQuestItem then
+            -- Blizzard quest yellow
+            r, g, b, a = 1, 0.82, 0, 1
+            button.StyleBorderBaseR = r
+            button.StyleBorderBaseG = g
+            button.StyleBorderBaseB = b
+            button.StyleBorderBaseA = a
+            button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
+        else
+            button.StyleBorderBaseR = r
+            button.StyleBorderBaseG = g
+            button.StyleBorderBaseB = b
+            button.StyleBorderBaseA = a
+            button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
+        end
     end,
 })
 

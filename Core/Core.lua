@@ -4,10 +4,49 @@ local ADDON_NAME, ns = ...
 local LunaBags = LibStub("AceAddon-3.0"):NewAddon(ADDON_NAME, "AceConsole-3.0", "AceEvent-3.0")
 ns.LunaBags = LunaBags
 
+local frameWorkQueue = {}
+local frameWorkFrame
+
+local function QueueFrameWork(callback)
+    if type(callback) ~= "function" then
+        return
+    end
+    if not CreateFrame then
+        callback()
+        return
+    end
+    frameWorkQueue[#frameWorkQueue + 1] = callback
+    if not frameWorkFrame then
+        frameWorkFrame = CreateFrame("Frame")
+    end
+    frameWorkFrame:SetScript("OnUpdate", function(frame)
+        local nextWork = table.remove(frameWorkQueue, 1)
+        if not nextWork then
+            frame:SetScript("OnUpdate", nil)
+            return
+        end
+        nextWork()
+        if #frameWorkQueue == 0 then
+            frame:SetScript("OnUpdate", nil)
+        end
+    end)
+end
+
 local defaults = {
     profile = {
         enabled = true,
         debug = false,
+        ui = {
+            windowColor = { r = 0.12, g = 0.12, b = 0.12 },
+            windowOpacity = 0.72,
+            headerColor = { r = 0.07, g = 0.07, b = 0.07 },
+            headerOpacity = 0.78,
+            itemFrameColor = { r = 0.13, g = 0.13, b = 0.13 },
+            itemFrameOpacity = 0.92,
+            itemBorderSize = 1,
+            stackCountTextSize = 12,
+            cooldownTextSize = 16,
+        },
         oneBag = {
             columns = 11,
             itemSize = 37,
@@ -17,16 +56,26 @@ local defaults = {
             showBagRail = true,
             scale = 1,
             locked = false,
+            windowColor = { r = 0.12, g = 0.12, b = 0.12 },
+            windowOpacity = 0.72,
+            headerColor = { r = 0.07, g = 0.07, b = 0.07 },
+            headerOpacity = 0.78,
             point = "BOTTOMRIGHT",
             x = -34,
             y = 126,
         },
         oneBank = {
-            columns = 11,
+            columns = 14,
             itemSize = 36,
             spacing = 4,
+            splitBags = {},
+            visibleBags = {},
             scale = 1,
             locked = false,
+            windowColor = { r = 0.12, g = 0.12, b = 0.12 },
+            windowOpacity = 0.72,
+            headerColor = { r = 0.07, g = 0.07, b = 0.07 },
+            headerOpacity = 0.78,
             point = "BOTTOMLEFT",
             x = 34,
             y = 126,
@@ -38,6 +87,24 @@ local defaults = {
         sorting = {
             priorityItemIDs = "6948",
             reverseSlotOrder = false,
+            rules = {
+                { key = "priority", direction = "asc", enabled = true },
+                { key = "quality", direction = "desc", enabled = true },
+                { key = "itemLevel", direction = "desc", enabled = true },
+                { key = "classOrder", direction = "asc", enabled = true },
+                { key = "classID", direction = "asc", enabled = true },
+                { key = "subClassID", direction = "asc", enabled = true },
+                { key = "equipLoc", direction = "asc", enabled = true },
+                { key = "name", direction = "asc", enabled = true },
+                { key = "itemID", direction = "asc", enabled = true },
+                { key = "count", direction = "desc", enabled = true },
+            },
+        },
+        categories = {
+            enabled = false,
+            columns = 1,
+            nextID = 1,
+            list = {},
         },
     },
 }
@@ -50,6 +117,15 @@ function LunaBags:OnInitialize()
     if not self.db.profile.plugins._qualityBorderMigrated then
         self.db.profile.plugins.qualityBorder = true
         self.db.profile.plugins._qualityBorderMigrated = true
+    end
+    self.db.profile.ui = self.db.profile.ui or {}
+    if self.db.profile.ui._migratedSharedAppearance ~= true then
+        local source = self.db.profile.oneBag or self.db.profile.oneBank or {}
+        self.db.profile.ui.windowColor = self.db.profile.ui.windowColor or source.windowColor
+        self.db.profile.ui.windowOpacity = self.db.profile.ui.windowOpacity or source.windowOpacity
+        self.db.profile.ui.headerColor = self.db.profile.ui.headerColor or source.headerColor
+        self.db.profile.ui.headerOpacity = self.db.profile.ui.headerOpacity or source.headerOpacity
+        self.db.profile.ui._migratedSharedAppearance = true
     end
     self:RegisterChatCommand("lunabags", "HandleSlashCommand")
     self:RegisterChatCommand("lb", "HandleSlashCommand")
@@ -173,14 +249,69 @@ function LunaBags:UpdateCurrentCharacterCache(includeBank)
     ns.BagData:UpdateCurrentMoney()
 end
 
+function LunaBags:QueueOpenWindowRefresh()
+    self._refreshQueueToken = (self._refreshQueueToken or 0) + 1
+    local token = self._refreshQueueToken
+
+    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+        QueueFrameWork(function()
+            if token == self._refreshQueueToken and ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+                ns.OneBag:Refresh()
+            end
+        end)
+    end
+    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+        QueueFrameWork(function()
+            if token == self._refreshQueueToken and ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+                ns.OneBank:Refresh()
+            end
+        end)
+    end
+end
+
+function LunaBags:UpdateCurrentCharacterCacheDeferred(includeBank, refreshOpenWindows)
+    if not ns.BagData then
+        return
+    end
+
+    self._cacheQueueToken = (self._cacheQueueToken or 0) + 1
+    local token = self._cacheQueueToken
+    local shouldIncludeBank = includeBank == true and ns.BagData:IsBankAvailable()
+
+    local function finish()
+        if token ~= self._cacheQueueToken or not ns.BagData then
+            return
+        end
+        ns.BagData:UpdateCurrentMoney()
+        if refreshOpenWindows then
+            self:QueueOpenWindowRefresh()
+        end
+        if self.db and self.db.profile and self.db.profile.debug then
+            self:Print("Bags cache updated.")
+        end
+    end
+
+    if ns.BagData.ScanBagsDeferred then
+        ns.BagData:ScanBagsDeferred(shouldIncludeBank, finish)
+    else
+        QueueFrameWork(function()
+            if token ~= self._cacheQueueToken or not ns.BagData then
+                return
+            end
+            self:UpdateCurrentCharacterCache(shouldIncludeBank)
+            if refreshOpenWindows then
+                self:QueueOpenWindowRefresh()
+            end
+        end)
+    end
+end
+
 function LunaBags:ADDON_LOADED(addonName)
     if addonName and addonName ~= ADDON_NAME then
         return
     end
     self:UpdateCurrentCharacterCache(false)
-    if addonName == "Blizzard_BankUI" or addonName == ADDON_NAME then
-        self:EnsureBankFrameSuppressionHooks()
-    end
+    -- Intentionally avoid destructive BankFrame suppression hooks.
 end
 
 local function GetPlayerBagCapacity()
@@ -258,27 +389,36 @@ function LunaBags:BAG_UPDATE_DELAYED()
         end
         return
     end
-    self:UpdateCurrentCharacterCache(true)
-    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
-        ns.OneBag:Refresh()
-    end
-    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
-        ns.OneBank:Refresh()
-    end
 
-    if self.db.profile.debug then
-        self:Print("Bags cache updated.")
+    -- Coalesce rapid bag updates (loot spam / auto-loot bursts).
+    local now = GetTime and GetTime() or 0
+    if not self._lastBagUpdateAt then
+        self._lastBagUpdateAt = 0
     end
+    if now > 0 and (now - self._lastBagUpdateAt) < 0.10 then
+        if (not self._bagUpdateFlushQueued) and C_Timer and C_Timer.After then
+            self._bagUpdateFlushQueued = true
+            C_Timer.After(0.10, function()
+                if not ns or not ns.LunaBags then
+                    return
+                end
+                ns.LunaBags._bagUpdateFlushQueued = false
+                ns.LunaBags:BAG_UPDATE_DELAYED()
+            end)
+        end
+        return
+    end
+    self._lastBagUpdateAt = now
+
+    local includeBank = ns.BagData and ns.BagData.IsBankAvailable and ns.BagData:IsBankAvailable() or false
+    self:UpdateCurrentCharacterCacheDeferred(includeBank == true, true)
 end
 
 function LunaBags:PLAYER_MONEY()
-    self:UpdateCurrentCharacterCache(false)
-    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
-        ns.OneBag:Refresh()
+    if ns.BagData then
+        ns.BagData:UpdateCurrentMoney()
     end
-    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
-        ns.OneBank:Refresh()
-    end
+    self:QueueOpenWindowRefresh()
 end
 
 function LunaBags:PLAYER_LOGOUT()
@@ -286,7 +426,7 @@ function LunaBags:PLAYER_LOGOUT()
 end
 
 function LunaBags:BANKFRAME_OPENED()
-    self:EnsureBankFrameSuppressionHooks()
+    self:SuppressDefaultBankFrame()
     self:BAG_UPDATE_DELAYED()
     if ns.BagHooks then
         local now = GetTime and GetTime() or 0
@@ -301,6 +441,7 @@ function LunaBags:BANKFRAME_OPENED()
 end
 
 function LunaBags:BANKFRAME_CLOSED()
+    self:RestoreDefaultBankFrame()
     if ns.BagHooks then
         ns.BagHooks:CloseBags("BankClose")
     end
@@ -467,6 +608,12 @@ function LunaBags:HandleSlashCommand(input)
 
     if cmd == "debug" then
         self.db.profile.debug = not self.db.profile.debug
+        if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+            ns.OneBag:Refresh()
+        end
+        if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+            ns.OneBank:Refresh()
+        end
         self:Print(("Debug is now %s."):format(self.db.profile.debug and "ON" or "OFF"))
         return
     end
