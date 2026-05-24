@@ -35,8 +35,107 @@ local function GetColorValue(color, r, g, b)
         return r, g, b
     end
     return tonumber(color.r or color[1]) or r,
-        tonumber(color.g or color[2]) or g,
-        tonumber(color.b or color[3]) or b
+    tonumber(color.g or color[2]) or g,
+    tonumber(color.b or color[3]) or b
+end
+
+
+local function ResolveButtonIcon(button)
+    if not button then
+        return nil
+    end
+    local buttonName = button.GetName and button:GetName() or nil
+    local icon = button.icon or button.Icon or button.IconTexture or (buttonName and (_G[buttonName .. "IconTexture"] or _G[buttonName .. "Icon"]))
+    if icon then
+        button.icon = icon
+    end
+    return icon
+end
+
+local function ReadContainerItemLocked(bag, slot)
+    bag = tonumber(bag)
+    slot = tonumber(slot)
+    if not bag or not slot then
+        return nil
+    end
+
+    if C_Container and C_Container.GetContainerItemInfo then
+        local info = C_Container.GetContainerItemInfo(bag, slot)
+        if type(info) == "table" then
+            return info.isLocked or info.locked or false
+        end
+    end
+
+    if GetContainerItemInfo then
+        local _, _, locked = GetContainerItemInfo(bag, slot)
+        return locked or false
+    end
+
+    return nil
+end
+
+local function GetItemBagSlot(button, item)
+    item = item or (button and button._styleItem) or (button and button.item)
+
+    local bag = item and (item.bag or item.bagID or item.bagId or item.container or item.containerID or item.containerId or item.containerIndex)
+    local slot = item and (item.slot or item.slotID or item.slotId or item.containerSlotID or item.containerSlotId or item.slotIndex)
+
+    bag = bag or (button and (button.bag or button.bagID or button.bagId or button.container or button.containerID or button.containerId or button.containerIndex))
+    slot = slot or (button and (button.slot or button.slotID or button.slotId or button.containerSlotID or button.containerSlotId or button.slotIndex))
+
+    return tonumber(bag), tonumber(slot)
+end
+
+function ItemButtonStyle.IsItemLocked(button, item)
+    item = item or (button and button._styleItem) or (button and button.item)
+
+    if button and (button._styleDragging or button.isLocked or button.locked) then
+        return true
+    end
+
+    if item and (item.isLocked or item.locked) then
+        return true
+    end
+
+    local bag, slot = GetItemBagSlot(button, item)
+    local locked = ReadContainerItemLocked(bag, slot)
+    if locked ~= nil then
+        return locked == true
+    end
+
+    return false
+end
+
+function ItemButtonStyle.UpdateLockedState(button, item)
+    if not button then
+        return
+    end
+
+    if item then
+        button._styleItem = item
+    end
+
+    local icon = ResolveButtonIcon(button)
+    local locked = ItemButtonStyle.IsItemLocked(button, item)
+
+    if icon then
+        if icon.SetDesaturated then
+            icon:SetDesaturated(locked or false)
+        end
+        if icon.SetVertexColor then
+            if locked then
+                icon:SetVertexColor(0.45, 0.45, 0.45, 1)
+            else
+                icon:SetVertexColor(1, 1, 1, 1)
+            end
+        end
+    end
+
+    if locked then
+        button:SetAlpha(math.max(0.1, (button._baseAlpha or 1) * 0.72))
+    elseif not button._styleDragging then
+        button:SetAlpha(button._baseAlpha or 1)
+    end
 end
 
 function ItemButtonStyle.GetConfig()
@@ -215,11 +314,11 @@ function ItemButtonStyle.ResetState(button)
     button:SetAlpha(button._baseAlpha or 1)
     button.StyleBG:SetBackdropColor(cfg.frameR, cfg.frameG, cfg.frameB, cfg.frameA)
     ItemButtonStyle.SetBorderVisualColor(
-        button,
-        button.StyleBorderBaseR or 0.34,
-        button.StyleBorderBaseG or 0.34,
-        button.StyleBorderBaseB or 0.34,
-        button.StyleBorderBaseA or 0.95
+            button,
+            button.StyleBorderBaseR or 0.34,
+            button.StyleBorderBaseG or 0.34,
+            button.StyleBorderBaseB or 0.34,
+            button.StyleBorderBaseA or 0.95
     )
     if button.StyleGlow then
         button.StyleGlow:Hide()
@@ -262,7 +361,7 @@ function ItemButtonStyle.Apply(button)
     end
 
     local buttonName = button.GetName and button:GetName() or nil
-    local icon = button.icon or button.Icon or (buttonName and (_G[buttonName .. "IconTexture"] or _G[buttonName .. "Icon"]))
+    local icon = ResolveButtonIcon(button)
     if icon then
         icon:ClearAllPoints()
         icon:SetPoint("TOPLEFT", button, "TOPLEFT", -3, 4)
@@ -306,27 +405,22 @@ function ItemButtonStyle.Apply(button)
         local function SetIdle(self)
             if self._styleDragging then return end
             ItemButtonStyle.ResetState(self)
-            if self.icon and self.icon.SetDesaturated then
-                self.icon:SetDesaturated(false)
-            end
+            ItemButtonStyle.UpdateLockedState(self)
         end
         local function SetHover(self)
             if not self.StyleBG or not self.StyleBorder then return end
             local style = ItemButtonStyle.GetConfig()
             if self._styleDragging then return end
-            self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(Brighten(style.frameR, 0.04), Brighten(style.frameG, 0.04), Brighten(style.frameB, 0.04), math.min(1, style.frameA + 0.03))
             ItemButtonStyle.SetBorderVisualColor(
-                self,
-                Brighten(self.StyleBorderBaseR or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.10),
-                self.StyleBorderBaseA or 0.98
+                    self,
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.10),
+                    self.StyleBorderBaseA or 0.98
             )
             if self.StyleGlow then self.StyleGlow:Hide() end
-            if self.icon and self.icon.SetDesaturated then
-                self.icon:SetDesaturated(false)
-            end
+            ItemButtonStyle.UpdateLockedState(self)
         end
         local function SetDrag(self)
             if not self.StyleBG or not self.StyleBorder then return end
@@ -335,16 +429,14 @@ function ItemButtonStyle.Apply(button)
             self:SetAlpha(math.max(0.1, (self._baseAlpha or 1) * 0.72))
             self.StyleBG:SetBackdropColor(Brighten(style.frameR, 0.07), Brighten(style.frameG, 0.07), Brighten(style.frameB, 0.07), math.min(1, style.frameA + 0.06))
             ItemButtonStyle.SetBorderVisualColor(
-                self,
-                Brighten(self.StyleBorderBaseR or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.20),
-                1
+                    self,
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.20),
+                    1
             )
             if self.StyleGlow then self.StyleGlow:Hide() end
-            if self.icon and self.icon.SetDesaturated then
-                self.icon:SetDesaturated(true)
-            end
+            ItemButtonStyle.UpdateLockedState(self)
         end
 
         button:HookScript("OnEnter", SetHover)
@@ -372,6 +464,27 @@ function ItemButtonStyle.Apply(button)
             if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
         end)
         button:HookScript("OnHide", SetIdle)
+
+        button:HookScript("OnUpdate", function(self, elapsed)
+            self._styleLockRefreshElapsed = (self._styleLockRefreshElapsed or 0) + (elapsed or 0)
+            if self._styleLockRefreshElapsed < 0.05 then
+                return
+            end
+            self._styleLockRefreshElapsed = 0
+            ItemButtonStyle.UpdateLockedState(self)
+        end)
+
+        if button.RegisterEvent then
+            button:RegisterEvent("ITEM_LOCK_CHANGED")
+            button:RegisterEvent("BAG_UPDATE")
+            button:RegisterEvent("BAG_UPDATE_DELAYED")
+            button:RegisterEvent("MAIL_SEND_INFO_UPDATE")
+            button:RegisterEvent("MAIL_CLOSED")
+            button:HookScript("OnEvent", function(self)
+                ItemButtonStyle.UpdateLockedState(self)
+            end)
+        end
+
         button.StyleStateHooks = true
         SetIdle(button)
     end
@@ -381,6 +494,7 @@ function ItemButtonStyle.UpdateBorderForItem(button, item, qualityEnabled)
     if not button or not button.StyleBorder then
         return
     end
+    button._styleItem = item
     local useQuality = qualityEnabled ~= false
     local quality = useQuality and item and item.quality or nil
     if useQuality and quality == nil and item and item.itemLink and GetItemInfo then
@@ -392,4 +506,5 @@ function ItemButtonStyle.UpdateBorderForItem(button, item, qualityEnabled)
     if button.IconBorder then button.IconBorder:SetAlpha(0); button.IconBorder:Hide() end
     if button.Background then button.Background:SetTexture(nil); button.Background:Hide() end
     if button.IconOverlay then button.IconOverlay:SetTexture(nil); button.IconOverlay:Hide() end
+    ItemButtonStyle.UpdateLockedState(button, item)
 end
