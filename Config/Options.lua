@@ -175,12 +175,12 @@ end
 
 local DEFAULT_SORT_RULES = {
     { key = "priority", direction = "asc", enabled = true },
-    { key = "quality", direction = "desc", enabled = true },
-    { key = "itemLevel", direction = "desc", enabled = true },
     { key = "classOrder", direction = "asc", enabled = true },
     { key = "classID", direction = "asc", enabled = true },
     { key = "subClassID", direction = "asc", enabled = true },
     { key = "equipLoc", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "itemLevel", direction = "desc", enabled = true },
     { key = "name", direction = "asc", enabled = true },
     { key = "itemID", direction = "asc", enabled = true },
     { key = "count", direction = "desc", enabled = true },
@@ -495,6 +495,29 @@ local function GetCategoryConfig()
     return ns.Categories:GetConfig(selectedCategoryScope) or { enabled = false, list = {}, columns = 1 }
 end
 
+local function GetCategoryScopeLabel()
+    return selectedCategoryScope == "bank" and "Bank" or "Bags"
+end
+
+local function GetCategoryOverview()
+    local cfg = GetCategoryConfig()
+    local count = #(cfg.list or {})
+    local state = cfg.enabled == true and "enabled" or "disabled"
+    local layout = cfg.layout == "fixed" and "fixed columns" or "masonry"
+    return ("%s categories: %d configured, %s, %s layout. Drag items onto a category in the bag or bank window to add them; drag categorized items back to the inventory area to remove or blacklist them."):format(
+        GetCategoryScopeLabel(),
+        count,
+        state,
+        layout
+    )
+end
+
+local function RefreshOpenWindows()
+    RefreshOneBag(true)
+    RefreshOneBank()
+    RefreshOneGuildBank()
+end
+
 local function RefreshCategories()
     if RefreshCategoryOptions then
         RefreshCategoryOptions()
@@ -533,6 +556,17 @@ end
 local function BuildCategoryOptions()
     local cfg = GetCategoryConfig()
     local args = {
+        overview = {
+            type = "description",
+            name = GetCategoryOverview,
+            order = 0,
+            fontSize = "medium",
+        },
+        scopeHeader = {
+            type = "header",
+            name = "Scope",
+            order = 0.5,
+        },
         categoriesEnabled = {
             type = "toggle",
             name = "Enable Category Sections",
@@ -569,6 +603,11 @@ local function BuildCategoryOptions()
                 RefreshCategories()
             end,
         },
+        layoutHeader = {
+            type = "header",
+            name = "Layout",
+            order = 3.5,
+        },
         categoryColumns = {
             type = "range",
             name = "Category Columns",
@@ -582,6 +621,26 @@ local function BuildCategoryOptions()
                 cfg.columns = tonumber(value) or 1
                 RefreshCategories()
             end,
+        },
+        categoryLayout = {
+            type = "select",
+            name = "Category Layout",
+            desc = "Masonry fills the shortest column first. Fixed keeps categories aligned in stable column lanes.",
+            order = 5,
+            values = {
+                masonry = "Masonry",
+                fixed = "Fixed",
+            },
+            get = function() return cfg.layout == "fixed" and "fixed" or "masonry" end,
+            set = function(_, value)
+                cfg.layout = (value == "fixed") and "fixed" or "masonry"
+                RefreshCategories()
+            end,
+        },
+        categoriesHeader = {
+            type = "header",
+            name = GetCategoryScopeLabel() .. " Categories",
+            order = 9,
         },
     }
 
@@ -700,6 +759,17 @@ local function BuildCategoryOptions()
                                 RefreshCategories()
                             end,
                         },
+                        blacklistItemIDs = {
+                            type = "input",
+                            name = "Blacklist Item IDs",
+                            desc = "Comma-separated item IDs excluded from this category, useful with broad class rules.",
+                            order = 1.5,
+                            get = function() return category.rules.blacklistItemIDs or "" end,
+                            set = function(_, value)
+                                category.rules.blacklistItemIDs = value ~= "" and value or nil
+                                RefreshCategories()
+                            end,
+                        },
                         qualityEnabled = {
                             type = "toggle",
                             name = "Use Quality Rule",
@@ -806,6 +876,17 @@ local function BuildCategoryOptions()
 end
 local function BuildGeneralOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Enable the addon, refresh open windows, and jump straight into the live inventory UI while tuning settings.",
+            order = 0,
+            fontSize = "medium",
+        },
+        coreHeader = {
+            type = "header",
+            name = "Core",
+            order = 0.5,
+        },
         enabled = {
             type = "toggle",
             name = "Enabled",
@@ -824,11 +905,40 @@ local function BuildGeneralOptions()
                 RefreshOneBank()
             end,
         },
+        actionsHeader = {
+            type = "header",
+            name = "Actions",
+            order = 10,
+        },
+        openBags = {
+            type = "execute",
+            name = "Open Bags",
+            desc = "Open the combined bag window.",
+            order = 11,
+            func = function()
+                if ns.OneBag then
+                    ns.OneBag:Show()
+                end
+            end,
+        },
+        refreshWindows = {
+            type = "execute",
+            name = "Refresh Open Windows",
+            desc = "Reapply current profile settings to open LunaBags windows.",
+            order = 12,
+            func = RefreshOpenWindows,
+        },
     }
 end
 
 local function BuildAppearanceOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Shared color, opacity, border, and text settings used by the bag, bank, and guild bank windows.",
+            order = -1,
+            fontSize = "medium",
+        },
         resetColors = {
             type = "execute",
             name = "Reset Colors",
@@ -926,6 +1036,17 @@ end
 
 local function BuildBagOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Inventory window size, spacing, scale, position lock, and row splitting.",
+            order = 0,
+            fontSize = "medium",
+        },
+        layoutHeader = {
+            type = "header",
+            name = "Layout",
+            order = 0.5,
+        },
         windowWidth = {
             type = "range",
             name = "Window Width",
@@ -1007,6 +1128,17 @@ end
 
 local function BuildBankOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Bank window size, spacing, scale, and position lock.",
+            order = 0,
+            fontSize = "medium",
+        },
+        layoutHeader = {
+            type = "header",
+            name = "Layout",
+            order = 0.5,
+        },
         bankWindowWidth = {
             type = "range",
             name = "Window Width",
@@ -1081,6 +1213,17 @@ end
 
 local function BuildGuildBankOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Guild bank grid density, spacing, scale, and position lock.",
+            order = 0,
+            fontSize = "medium",
+        },
+        layoutHeader = {
+            type = "header",
+            name = "Layout",
+            order = 0.5,
+        },
         guildBankColumns = {
             type = "range",
             name = "Columns",
@@ -1145,6 +1288,17 @@ end
 
 function BuildSortingOptions()
     local args = {
+        overview = {
+            type = "description",
+            name = "Sorting behavior is shared by real sorting and visual sorting. Rule order is evaluated from top to bottom.",
+            order = 0,
+            fontSize = "medium",
+        },
+        behaviorHeader = {
+            type = "header",
+            name = "Behavior",
+            order = 0.5,
+        },
         reverseSlotOrder = {
             type = "toggle",
             name = "Reverse Slot Order",
@@ -1152,6 +1306,24 @@ function BuildSortingOptions()
             order = 1,
             get = function() return GetSortingSetting("reverseSlotOrder", false) end,
             set = function(_, value) SetSortingSetting("reverseSlotOrder", value == true or nil) end,
+        },
+        visualOnly = {
+            type = "toggle",
+            name = "Visual Sort Only",
+            desc = "Display inventory items in sorted order without moving them between bag slots.",
+            order = 1.25,
+            get = function() return GetSortingSetting("visualOnly", false) end,
+            set = function(_, value)
+                SetSortingSetting("visualOnly", value == true or nil)
+                if ns.OneBag then
+                    ns.OneBag._layoutModel = nil
+                end
+                if ns.OneBank then
+                    ns.OneBank._layoutModel = nil
+                end
+                RefreshOneBag()
+                RefreshOneBank()
+            end,
         },
         priorityItemIDs = {
             type = "input",
@@ -1177,6 +1349,11 @@ function BuildSortingOptions()
             name = "Add Sort Rule",
             order = 3,
             func = AddSortRule,
+        },
+        rulesHeader = {
+            type = "header",
+            name = "Rules",
+            order = 9,
         },
     }
 
@@ -1249,12 +1426,26 @@ end
 
 local function BuildPluginOptions()
     return {
+        overview = {
+            type = "description",
+            name = "Small item-slot overlays and borders. These update open windows immediately.",
+            order = 0,
+            fontSize = "medium",
+        },
         pluginQualityBorder = {
             type = "toggle",
             name = "Item Quality Border",
             order = 1,
             get = function() return GetPluginSetting("qualityBorder", true) end,
             set = function(_, value) SetPluginSetting("qualityBorder", value) end,
+        },
+        pluginEquipmentSetBorder = {
+            type = "toggle",
+            name = "Equipment Set Border",
+            desc = "Use a blue border for items that belong to an equipment set.",
+            order = 1.5,
+            get = function() return GetPluginSetting("equipmentSetBorder", true) end,
+            set = function(_, value) SetPluginSetting("equipmentSetBorder", value) end,
         },
         pluginTrashIcon = {
             type = "toggle",
@@ -1271,7 +1462,7 @@ local function BuildProfileOptions()
         return {
             type = "group",
             name = "Profiles",
-            order = 5,
+            order = 6,
             args = {
                 unavailable = {
                     type = "description",
@@ -1286,7 +1477,7 @@ local function BuildProfileOptions()
         return {
             type = "group",
             name = "Profiles",
-            order = 5,
+            order = 6,
             args = {
                 unavailable = {
                     type = "description",
@@ -1298,7 +1489,7 @@ local function BuildProfileOptions()
     end
     local profileOptions = aceDBOptions:GetOptionsTable(LunaBags.db)
     profileOptions.name = "Profiles"
-    profileOptions.order = 5
+    profileOptions.order = 6
     return profileOptions
 end
 
@@ -1315,7 +1506,7 @@ options = {
         },
         ui = {
             type = "group",
-            name = "UI",
+            name = "Windows",
             order = 2,
             childGroups = "tab",
             args = {
@@ -1345,26 +1536,26 @@ options = {
                 },
             },
         },
+        categories = {
+            type = "group",
+            name = "Categories",
+            order = 3,
+            childGroups = "tree",
+            args = BuildCategoryOptions(),
+        },
         sorting = {
             type = "group",
             name = "Sorting",
-            order = 3,
+            order = 4,
             args = BuildSortingOptions(),
         },
         plugins = {
             type = "group",
             name = "Plugins",
-            order = 4,
+            order = 5,
             args = BuildPluginOptions(),
         },
         profiles = BuildProfileOptions(),
-        categories = {
-            type = "group",
-            name = "Categories",
-            order = 6,
-            childGroups = "tree",
-            args = BuildCategoryOptions(),
-        },
     },
 }
 

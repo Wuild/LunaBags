@@ -75,6 +75,13 @@ local function IsQuestItem(item)
     return item and item.isQuestItem == true
 end
 
+local function IsEquipmentSetItem(item)
+    return ns.Categories
+        and ns.Categories.IsEquipmentSetItem
+        and ns.Categories:IsEquipmentSetItem(item)
+        or false
+end
+
 local function EnsureTrashIcon(button)
     if button.trashIcon then
         return button.trashIcon
@@ -111,11 +118,12 @@ Plugins:Register("qualityBorder", {
         if isQuestItem then
             -- Blizzard quest yellow
             r, g, b, a = 1, 0.82, 0, 1
-            button.StyleBorderBaseR = r
-            button.StyleBorderBaseG = g
-            button.StyleBorderBaseB = b
-            button.StyleBorderBaseA = a
-            button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
+        elseif enabled and Plugins:IsEnabled("equipmentSetBorder") and IsEquipmentSetItem(item) then
+            r, g, b, a = 0.20, 0.72, 1.0, 1
+        end
+
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.SetBorderColor then
+            ns.ItemButtonStyle.SetBorderColor(button, r, g, b, a)
         else
             button.StyleBorderBaseR = r
             button.StyleBorderBaseG = g
@@ -124,6 +132,10 @@ Plugins:Register("qualityBorder", {
             button.StyleBorder:SetBackdropBorderColor(r, g, b, a)
         end
     end,
+})
+
+Plugins:Register("equipmentSetBorder", {
+    defaultEnabled = true,
 })
 
 Plugins:Register("trashIcon", {

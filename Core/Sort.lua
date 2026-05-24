@@ -80,12 +80,12 @@ local CLASS_ORDER = {
 
 local DEFAULT_SORT_RULES = {
     { key = "priority", direction = "asc", enabled = true },
-    { key = "quality", direction = "desc", enabled = true },
-    { key = "itemLevel", direction = "desc", enabled = true },
     { key = "classOrder", direction = "asc", enabled = true },
     { key = "classID", direction = "asc", enabled = true },
     { key = "subClassID", direction = "asc", enabled = true },
     { key = "equipLoc", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "itemLevel", direction = "desc", enabled = true },
     { key = "name", direction = "asc", enabled = true },
     { key = "itemID", direction = "asc", enabled = true },
     { key = "count", direction = "desc", enabled = true },
@@ -485,6 +485,93 @@ local function AssignDesiredLayout(spaces)
     end
 
     return true
+end
+
+local function BuildDisplaySortData(entry)
+    local item = entry and entry.item
+    local itemID = tonumber(item and item.itemID) or 0
+    local data = {
+        bag = entry and entry.bagID or 0,
+        slot = entry and entry.slot or 0,
+        key = GetSlotKey(entry and entry.bagID or 0, entry and entry.slot or 0),
+        empty = item == nil,
+        itemID = itemID,
+        count = tonumber(item and item.stackCount) or 0,
+        quality = tonumber(item and item.quality) or -1,
+        itemLevel = tonumber(item and item.itemLevel) or 0,
+        classID = tonumber(item and item.classID) or 999,
+        subClassID = tonumber(item and item.subClassID) or 999,
+        name = string.lower(tostring(item and item.name or "")),
+        itemTypeName = item and item.itemTypeName or "",
+        subTypeName = item and item.subTypeName or "",
+        equipLoc = item and item.equipLoc or "",
+        sellPrice = tonumber(item and item.sellPrice) or 0,
+    }
+    data.classOrder = CLASS_ORDER[data.classID] or 500
+
+    if not data.empty then
+        local priorities = GetPriorityItemIDs()
+        if priorities[data.itemID] then
+            data.priority = 0
+        elseif IsMountItem(data) then
+            data.priority = 5
+        else
+            data.priority = 10
+        end
+    else
+        data.priority = 999
+    end
+
+    return data
+end
+
+function Sorter:SortDisplayEntries(entries)
+    if type(entries) ~= "table" or #entries <= 1 then
+        return entries
+    end
+
+    local result = {}
+    local sortable = {}
+    local empty = {}
+    local fillIndexes = {}
+
+    for index, entry in ipairs(entries) do
+        local locked = entry and IsUserLockedSlot(entry.bagID, entry.slot)
+        if locked then
+            result[index] = entry
+        else
+            fillIndexes[#fillIndexes + 1] = index
+            if entry and entry.item then
+                entry._displaySortData = BuildDisplaySortData(entry)
+                sortable[#sortable + 1] = entry
+            else
+                empty[#empty + 1] = entry
+            end
+        end
+    end
+
+    local sortRules = GetSortRules()
+    table.sort(sortable, function(a, b)
+        return ItemSortWithRules(a._displaySortData, b._displaySortData, sortRules)
+    end)
+
+    local outputIndex = IsReverseSlotOrder() and #fillIndexes or 1
+    local outputStep = IsReverseSlotOrder() and -1 or 1
+    local function NextFillIndex()
+        local fillIndex = fillIndexes[outputIndex]
+        outputIndex = outputIndex + outputStep
+        return fillIndex
+    end
+
+    for _, entry in ipairs(sortable) do
+        result[NextFillIndex()] = entry
+        entry._displaySortData = nil
+    end
+    for _, entry in ipairs(empty) do
+        result[NextFillIndex()] = entry
+    end
+
+    return result
 end
 
 local function IsCorrect(space)

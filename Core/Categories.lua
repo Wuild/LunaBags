@@ -66,11 +66,18 @@ local function CopyTableValue(value, seen)
     return out
 end
 
+local function ScopedConfigHasCategories(cfg)
+    return type(cfg) == "table" and type(cfg.list) == "table" and #cfg.list > 0
+end
+
 local function HasCategoryData(categories)
     if type(categories) ~= "table" then
         return false
     end
     if type(categories.list) == "table" and #categories.list > 0 then
+        return true
+    end
+    if ScopedConfigHasCategories(categories.bags) or ScopedConfigHasCategories(categories.bank) then
         return true
     end
     if type(categories.perCharacter) == "table" then
@@ -137,6 +144,78 @@ local function NormalizeScope(scope)
     return (scope == "bank") and "bank" or "bags"
 end
 
+local function EnsureDefaultScopedFields(cfg)
+    if type(cfg) ~= "table" then
+        return nil
+    end
+    cfg.list = cfg.list or {}
+    cfg.columns = tonumber(cfg.columns) or 1
+    cfg.nextID = tonumber(cfg.nextID) or 1
+    cfg.layout = (cfg.layout == "fixed") and "fixed" or "masonry"
+    return cfg
+end
+
+local function CopyBestPerCharacterScope(profile, scope)
+    if type(profile.perCharacter) ~= "table" then
+        return nil
+    end
+
+    local currentKey = GetCharacterKey()
+    local current = currentKey and profile.perCharacter[currentKey]
+    if ScopedConfigHasCategories(current and current[scope]) then
+        return CopyTableValue(current[scope])
+    end
+
+    for _, perChar in pairs(profile.perCharacter) do
+        if ScopedConfigHasCategories(perChar and perChar[scope]) then
+            return CopyTableValue(perChar[scope])
+        end
+    end
+
+    return nil
+end
+
+local function MigrateSharedScopes(profile)
+    if type(profile) ~= "table" or profile._migratedSharedCategoryScopes == true then
+        return
+    end
+
+    -- Categories are profile data. Older builds stored them per character, which
+    -- made copied/selected profiles look empty on alts.
+    if type(profile.bags) ~= "table" then
+        profile.bags = {}
+    end
+    if type(profile.bank) ~= "table" then
+        profile.bank = {}
+    end
+
+    if not ScopedConfigHasCategories(profile.bags) then
+        local migratedBags = nil
+        if type(profile.list) == "table" and #profile.list > 0 then
+            migratedBags = {
+                enabled = profile.enabled == true,
+                columns = tonumber(profile.columns) or 1,
+                nextID = tonumber(profile.nextID) or 1,
+                list = CopyTableValue(profile.list),
+            }
+        else
+            migratedBags = CopyBestPerCharacterScope(profile, "bags")
+        end
+        if migratedBags then
+            profile.bags = migratedBags
+        end
+    end
+
+    if not ScopedConfigHasCategories(profile.bank) then
+        local migratedBank = CopyBestPerCharacterScope(profile, "bank")
+        if migratedBank then
+            profile.bank = migratedBank
+        end
+    end
+
+    profile._migratedSharedCategoryScopes = true
+end
+
 local function EnsureScopedConfig(scope)
     local profile = GetProfile()
     if not profile then
@@ -144,17 +223,14 @@ local function EnsureScopedConfig(scope)
     end
 
     scope = NormalizeScope(scope)
-    profile.perCharacter = profile.perCharacter or {}
-    local key = GetCharacterKey()
-    if not key then
-        return nil
-    end
-    local perChar = profile.perCharacter[key] or {}
-    profile.perCharacter[key] = perChar
+    MigrateSharedScopes(profile)
 
     -- Migration: early sessions could resolve character identity as unknown and
     -- write categories into a shared placeholder bucket.
     if profile._migratedUnknownCharacterKey ~= true then
+        profile.perCharacter = profile.perCharacter or {}
+        local key = GetCharacterKey()
+        local perChar = key and profile.perCharacter[key] or nil
         local unknownBuckets = {
             "Unknown-UnknownRealm",
             "Unknown-",
@@ -164,32 +240,32 @@ local function EnsureScopedConfig(scope)
         for _, oldKey in ipairs(unknownBuckets) do
             local oldChar = profile.perCharacter[oldKey]
             if type(oldChar) == "table" and oldChar ~= perChar then
-                perChar.bags = perChar.bags or oldChar.bags
-                perChar.bank = perChar.bank or oldChar.bank
+                if perChar then
+                    perChar.bags = perChar.bags or oldChar.bags
+                    perChar.bank = perChar.bank or oldChar.bank
+                end
                 profile.perCharacter[oldKey] = nil
             end
         end
         profile._migratedUnknownCharacterKey = true
     end
-    perChar[scope] = perChar[scope] or {}
-    local cfg = perChar[scope]
-    cfg.list = cfg.list or {}
-    cfg.columns = tonumber(cfg.columns) or 1
-    cfg.nextID = tonumber(cfg.nextID) or 1
 
     -- Migration: early category builds stored bag categories directly at
     -- profile.categories.list before categories were per character and scoped.
     if scope == "bags" and profile._migratedFlatListToPerCharacter ~= true then
-        if type(profile.list) == "table" and #profile.list > 0 and #cfg.list == 0 then
+        local cfg = profile.bags or {}
+        if type(profile.list) == "table" and #profile.list > 0 and not ScopedConfigHasCategories(cfg) then
             cfg.list = CopyTableValue(profile.list)
             cfg.enabled = profile.enabled == true
-            cfg.columns = tonumber(profile.columns) or cfg.columns
-            cfg.nextID = tonumber(profile.nextID) or cfg.nextID
+            cfg.columns = tonumber(profile.columns) or cfg.columns or 1
+            cfg.nextID = tonumber(profile.nextID) or cfg.nextID or 1
+            profile.bags = cfg
         end
         profile._migratedFlatListToPerCharacter = true
     end
 
-    return cfg
+    profile[scope] = profile[scope] or {}
+    return EnsureDefaultScopedFields(profile[scope])
 end
 
 function Categories:GetConfig(scope)
@@ -271,6 +347,53 @@ function Categories:AddItemIDRule(category, itemID)
     return true
 end
 
+function Categories:RemoveItemIDRule(category, itemID)
+    if type(category) ~= "table" or type(category.rules) ~= "table" then
+        return false
+    end
+    itemID = tonumber(itemID)
+    if not itemID then
+        return false
+    end
+
+    local changed = false
+    local remaining = {}
+    for _, token in ipairs(SplitCSV(category.rules.itemIDs)) do
+        if tonumber(token) == itemID then
+            changed = true
+        else
+            remaining[#remaining + 1] = token
+        end
+    end
+
+    if changed then
+        category.rules.itemIDs = (#remaining > 0) and table.concat(remaining, ",") or nil
+    end
+    return changed
+end
+
+function Categories:AddBlacklistItemID(category, itemID)
+    if type(category) ~= "table" then
+        return false
+    end
+    itemID = tonumber(itemID)
+    if not itemID then
+        return false
+    end
+
+    category.rules = category.rules or {}
+    local existing = SplitCSV(category.rules.blacklistItemIDs)
+    for _, token in ipairs(existing) do
+        if tonumber(token) == itemID then
+            return false
+        end
+    end
+
+    existing[#existing + 1] = tostring(itemID)
+    category.rules.blacklistItemIDs = table.concat(existing, ",")
+    return true
+end
+
 local function MatchEquipmentSet(item)
     if not item or not item.itemID then return false end
 
@@ -315,10 +438,18 @@ local function MatchEquipmentSet(item)
     return false
 end
 
+function Categories:IsEquipmentSetItem(item)
+    return MatchEquipmentSet(item)
+end
+
 function Categories:ItemMatches(category, item)
     if not category or category.enabled == false or not item then return false end
     local rules = category.rules or {}
     local hasRule = false
+
+    if rules.blacklistItemIDs and rules.blacklistItemIDs ~= "" and MatchCSVNumber(item.itemID, rules.blacklistItemIDs) then
+        return false
+    end
 
     if rules.itemIDs and rules.itemIDs ~= "" then
         hasRule = true

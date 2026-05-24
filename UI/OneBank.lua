@@ -12,7 +12,10 @@ local OneBank = {
     showBagRail = true,
     visibleBags = {},
     sortingActive = false,
+    viewMode = false,
+    viewCharacterKey = nil,
     _closingBankFrame = false,
+    draggedCategoryItem = nil,
 }
 
 ns.OneBank = OneBank
@@ -104,6 +107,12 @@ local function NotifyOptionsChanged()
     if registry then
         registry:NotifyChange("LunaBags")
     end
+end
+
+local function IsVisualSortEnabled()
+    local addon = ns.LunaBags
+    local sorting = addon and addon.db and addon.db.profile and addon.db.profile.sorting
+    return sorting and sorting.visualOnly == true or false
 end
 
 local function EnsureResizeGrip(owner, frame)
@@ -418,6 +427,53 @@ local function GetCurrentCharacterKey()
     return ("%s-%s"):format(name, realm)
 end
 
+local function GetViewedBankCharacterData()
+    if not ns.BagData then
+        return nil
+    end
+    return ns.BagData:GetCharacterData(OneBank.viewCharacterKey or GetCurrentCharacterKey())
+end
+
+local function IsBankViewMode()
+    return OneBank.viewMode == true
+end
+
+local function GetCachedBankBagData(character, bagID)
+    if not character or type(character.bank) ~= "table" then
+        return nil
+    end
+    return character.bank[bagID] or character.bank[tostring(bagID)]
+end
+
+local function GetCachedBankSlot(bagData, slot)
+    if type(bagData) ~= "table" then
+        return nil
+    end
+    local slots = type(bagData.slots) == "table" and bagData.slots or bagData
+    return slots[slot] or slots[tostring(slot)]
+end
+
+local function GetCachedBankSlotCount(bagData)
+    if type(bagData) ~= "table" then
+        return 0
+    end
+    local size = tonumber(bagData.size)
+    if size and size > 0 then
+        return size
+    end
+    local slots = type(bagData.slots) == "table" and bagData.slots or bagData
+    local maxSlot = 0
+    if type(slots) == "table" then
+        for key in pairs(slots) do
+            local slot = tonumber(key)
+            if slot and slot > maxSlot then
+                maxSlot = slot
+            end
+        end
+    end
+    return maxSlot
+end
+
 local function GetConfig()
     local addon = ns.LunaBags
     if not addon or not addon.db or not addon.db.profile then
@@ -556,7 +612,20 @@ local function GetCursorItemID()
     return MatchItemID(value1) or MatchItemID(value2) or MatchItemID(value3)
 end
 
+local function CursorHasAssignableItem()
+    if CursorHasItem and CursorHasItem() then
+        return true
+    end
+    if GetCursorInfo then
+        return GetCursorInfo() == "item"
+    end
+    return false
+end
+
 local function AssignCursorItemToCategory(owner, category)
+    if owner and owner.viewMode then
+        return false
+    end
     local itemID = GetCursorItemID()
     if not itemID or not category or not ns.Categories or not ns.Categories.AddItemIDRule then
         return false
@@ -583,17 +652,112 @@ local function AssignCursorItemToCategory(owner, category)
     return added
 end
 
+local function RemoveDraggedItemFromCategory(owner)
+    if owner and owner.viewMode then
+        return false
+    end
+    local drag = owner and owner.draggedCategoryItem
+    if not drag or not drag.category or not drag.itemID or not ns.Categories then
+        return false
+    end
+
+    local removed = ns.Categories.RemoveItemIDRule and ns.Categories:RemoveItemIDRule(drag.category, drag.itemID)
+    local blacklisted = false
+    if not removed and ns.Categories.AddBlacklistItemID then
+        blacklisted = ns.Categories:AddBlacklistItemID(drag.category, drag.itemID)
+    end
+    owner.draggedCategoryItem = nil
+    if ClearCursor then
+        ClearCursor()
+    end
+    if owner.inventoryDropOverlay then
+        owner.inventoryDropOverlay:Hide()
+    end
+
+    if removed or blacklisted then
+        owner._layoutModel = nil
+        if owner.Refresh then
+            owner:Refresh()
+        end
+        NotifyOptionsChanged()
+        if ns.LunaBags and ns.LunaBags.Print then
+            local action = removed and "Removed" or "Blacklisted"
+            ns.LunaBags:Print(("%s item ID %d from category %s."):format(action, drag.itemID, drag.category.name or "Category"))
+        end
+    end
+
+    return removed or blacklisted
+end
+
+local function ShowInventoryDropOverlay(owner, shown)
+    if not owner or not owner.frame or not owner.frame.content then
+        return
+    end
+    if not owner.inventoryDropOverlay then
+        local overlay = CreateFrame("Frame", nil, owner.frame.content, "BackdropTemplate")
+        overlay:SetAllPoints(owner.frame.content)
+        overlay:SetFrameLevel((owner.frame.content:GetFrameLevel() or BANK_FRAME_LEVEL) + 80)
+        overlay:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 2,
+        })
+        overlay:SetBackdropColor(0.05, 0.24, 0.36, 0.22)
+        overlay:SetBackdropBorderColor(0.20, 0.72, 1.0, 0.85)
+        overlay:EnableMouse(true)
+        overlay:SetScript("OnReceiveDrag", function()
+            RemoveDraggedItemFromCategory(owner)
+        end)
+        overlay:SetScript("OnMouseUp", function(_, button)
+            if button == "LeftButton" and CursorHasAssignableItem() then
+                RemoveDraggedItemFromCategory(owner)
+            end
+        end)
+        overlay:SetScript("OnUpdate", function(self)
+            if not owner.draggedCategoryItem or not CursorHasAssignableItem() then
+                self:Hide()
+            end
+        end)
+        overlay:Hide()
+        owner.inventoryDropOverlay = overlay
+    end
+    owner.inventoryDropOverlay:SetShown(shown == true)
+end
+
+local function TrackCategoryDragFromButton(owner, button)
+    if not owner or not button then
+        return
+    end
+    if owner.viewMode then
+        owner.draggedCategoryItem = nil
+        ShowInventoryDropOverlay(owner, false)
+        return
+    end
+    local item = button.itemData
+    local itemID = tonumber(item and item.itemID)
+    if button.category and itemID then
+        owner.draggedCategoryItem = {
+            category = button.category,
+            itemID = itemID,
+        }
+        ShowInventoryDropOverlay(owner, true)
+    else
+        owner.draggedCategoryItem = nil
+        ShowInventoryDropOverlay(owner, false)
+    end
+end
+
 local function ConfigureCategoryPlaceholder(frame, owner, category)
     if not frame then
         return
     end
     frame.category = category
-    frame:EnableMouse(category ~= nil)
+    frame:EnableMouse(category ~= nil and not owner.viewMode)
     frame:SetScript("OnReceiveDrag", nil)
     frame:SetScript("OnMouseUp", nil)
     frame:SetScript("OnEnter", nil)
     frame:SetScript("OnLeave", nil)
-    if not category then
+    if not category or owner.viewMode then
         return
     end
 
@@ -601,19 +765,77 @@ local function ConfigureCategoryPlaceholder(frame, owner, category)
         AssignCursorItemToCategory(owner, self.category)
     end)
     frame:SetScript("OnMouseUp", function(self, button)
-        if button == "LeftButton" and CursorHasItem and CursorHasItem() then
+        if button == "LeftButton" and CursorHasAssignableItem() then
             AssignCursorItemToCategory(owner, self.category)
         end
     end)
     frame:SetScript("OnEnter", function(self)
-        if GameTooltip and CursorHasItem and CursorHasItem() then
+        if GameTooltip and CursorHasAssignableItem() then
+            self:SetBackdropColor(0.05, 0.24, 0.36, 0.45)
+            self:SetBackdropBorderColor(0.20, 0.72, 1.0, 0.95)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText("Assign item to category")
             GameTooltip:AddLine(category.name or "Category", 0.85, 0.85, 0.85)
             GameTooltip:Show()
         end
     end)
-    frame:SetScript("OnLeave", function()
+    frame:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(0.08, 0.08, 0.08, 0.42)
+        self:SetBackdropBorderColor(0.28, 0.28, 0.28, 0.55)
+        if GameTooltip then
+            GameTooltip:Hide()
+        end
+    end)
+end
+
+local function ConfigureCategoryDropTarget(frame, owner, target)
+    if not frame then
+        return
+    end
+    frame.category = target and target.category or nil
+    frame:SetScript("OnReceiveDrag", nil)
+    frame:SetScript("OnMouseUp", nil)
+    frame:SetScript("OnEnter", nil)
+    frame:SetScript("OnLeave", nil)
+    frame:SetScript("OnUpdate", nil)
+    frame:EnableMouse(false)
+    frame:SetAlpha(0)
+    if not target or not target.category or owner.viewMode then
+        return
+    end
+
+    frame:SetScript("OnUpdate", function(self)
+        local active = CursorHasAssignableItem()
+        self:EnableMouse(active)
+        self:SetAlpha(active and 1 or 0)
+        if active then
+            self:SetBackdropColor(0.05, 0.24, 0.36, 0.18)
+            self:SetBackdropBorderColor(0.20, 0.72, 1.0, 0.75)
+        end
+    end)
+    frame:SetScript("OnReceiveDrag", function(self)
+        AssignCursorItemToCategory(owner, self.category)
+    end)
+    frame:SetScript("OnMouseUp", function(self, button)
+        if button == "LeftButton" and CursorHasAssignableItem() then
+            AssignCursorItemToCategory(owner, self.category)
+        end
+    end)
+    frame:SetScript("OnEnter", function(self)
+        if CursorHasAssignableItem() then
+            self:SetBackdropColor(0.05, 0.24, 0.36, 0.38)
+            self:SetBackdropBorderColor(0.20, 0.72, 1.0, 0.95)
+            if GameTooltip then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Assign item to category")
+                GameTooltip:AddLine(self.category.name or "Category", 0.85, 0.85, 0.85)
+                GameTooltip:Show()
+            end
+        end
+    end)
+    frame:SetScript("OnLeave", function(self)
+        self:SetBackdropColor(0.05, 0.24, 0.36, 0.18)
+        self:SetBackdropBorderColor(0.20, 0.72, 1.0, 0.75)
         if GameTooltip then
             GameTooltip:Hide()
         end
@@ -838,17 +1060,28 @@ local function BankItemToInventorySlotCompat(slot)
 end
 
 local function ShowLiveBankItemTooltip(button)
-    if not button or not button.bagID or not button.slot then
+    local bagID = button and (button.bagID or button.viewBagID)
+    local slot = button and (button.slot or button.viewSlot)
+    if not button or not bagID or not slot then
         return false
     end
 
-    if IsBaseBankContainer(button.bagID) then
+    if button.readOnly then
+        local link = button.itemData and button.itemData.itemLink
+        if link and GameTooltip.SetHyperlink then
+            GameTooltip:SetHyperlink(link)
+            return true
+        end
+        return false
+    end
+
+    if IsBaseBankContainer(bagID) then
         if BankFrameItemButton_OnEnter then
             BankFrameItemButton_OnEnter(button)
             return true
         end
 
-        local invSlot = BankItemToInventorySlotCompat(button.slot)
+        local invSlot = BankItemToInventorySlotCompat(slot)
         if invSlot and GameTooltip:SetInventoryItem("player", invSlot) then
             return true
         end
@@ -857,12 +1090,12 @@ local function ShowLiveBankItemTooltip(button)
         return true
     end
 
-    local ok = GameTooltip:SetBagItem(button.bagID, button.slot)
+    local ok = GameTooltip:SetBagItem(bagID, slot)
     if ok then
         return true
     end
 
-    local link = (button.itemData and button.itemData.itemLink) or GetItemLinkFromBag(button.bagID, button.slot)
+    local link = (button.itemData and button.itemData.itemLink) or GetItemLinkFromBag(bagID, slot)
     if link and GameTooltip.SetHyperlink then
         GameTooltip:SetHyperlink(link)
         return true
@@ -1195,6 +1428,9 @@ function OneBank:CreateFrame()
         if OneBank.frame and OneBank.frame.SearchEditBox then
             OneBank.frame.SearchEditBox:ClearFocus()
         end
+        if OneBank.viewMode then
+            return
+        end
         if OneBank._closingBankFrame then
             return
         end
@@ -1206,6 +1442,15 @@ function OneBank:CreateFrame()
     end)
     frame.content = frame.Content or frame.content
     EnsureScrollFrame(frame)
+    frame.content:EnableMouse(true)
+    frame.content:SetScript("OnReceiveDrag", function()
+        RemoveDraggedItemFromCategory(OneBank)
+    end)
+    frame.content:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" and CursorHasAssignableItem() then
+            RemoveDraggedItemFromCategory(OneBank)
+        end
+    end)
 
     if frame.TitleText then
         frame.TitleText:Hide()
@@ -1312,7 +1557,13 @@ function OneBank:CreateFrame()
         frame.CustomTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         frame.CustomTitle:SetPoint("CENTER", frame.TitleBarBg, "CENTER", 0, 0)
     end
-    frame.CustomTitle:SetText(BANK or "Bank")
+    local bankTitle = BANK or "Bank"
+    if IsBankViewMode() then
+        local character = GetViewedBankCharacterData()
+        local name = character and character.name or UnitName("player") or "Player"
+        bankTitle = ("%s - %s"):format(name, bankTitle)
+    end
+    frame.CustomTitle:SetText(bankTitle)
 
     if not frame.CloseButton then
         frame.CloseButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
@@ -1440,7 +1691,7 @@ function OneBank:CreateFrame()
     frame.RailToggleButton:SetScript("OnClick", LunaBagsOneBank_RailToggleClicked)
     frame.RailToggleButton:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Toggle Bank Bag Rail")
+        GameTooltip:SetText(IsBankViewMode() and "Bank bag rail is hidden in view mode." or "Toggle Bank Bag Rail")
         GameTooltip:Show()
     end)
     frame.RailToggleButton:SetScript("OnLeave", function()
@@ -1641,7 +1892,7 @@ function OneBank:AcquireBagButton(index)
         if not button.invSlot then
             return
         end
-        if CursorHasItem() then
+        if CursorHasAssignableItem() then
             PutItemInBag(button.invSlot)
             return
         end
@@ -1667,7 +1918,7 @@ function OneBank:RefreshBagSlots()
     if not self.frame or not self.frame.BagSlots then
         return
     end
-    if not self.showBagRail then
+    if IsBankViewMode() or not self.showBagRail then
         self.frame.BagSlots:Hide()
         return
     end
@@ -1823,6 +2074,9 @@ function OneBank:AcquireButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBank_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBank_ItemButtonOnLeave)
+    btn:HookScript("OnDragStart", function(button)
+        TrackCategoryDragFromButton(OneBank, button)
+    end)
     btn:SetScript("OnUpdate", nil)
     btn.GetInventorySlot = function(self)
         if IsBaseBankContainer(self.bagID) then
@@ -1831,7 +2085,7 @@ function OneBank:AcquireButton(index)
         return nil
     end
     btn.UpdateTooltip = function(self)
-        if not GameTooltip or not self or not self.bagID or not self.slot then
+        if not GameTooltip or not self or not ((self.bagID and self.slot) or (self.viewBagID and self.viewSlot)) then
             return
         end
         if not GameTooltip:IsOwned(self) then
@@ -1870,7 +2124,46 @@ end
 
 function OneBank:BuildLiveSlots()
     local slots = {}
-    local includeFullDetails = self.searchText and self.searchText ~= ""
+    local includeFullDetails = (self.searchText and self.searchText ~= "") or IsVisualSortEnabled()
+    if IsBankViewMode() then
+        local character = GetViewedBankCharacterData()
+        for _, bagID in ipairs(BANK_BAGS) do
+            if bagID == -1 or self.visibleBags[bagID] ~= false then
+                local bagData = GetCachedBankBagData(character, bagID)
+                local slotCount = GetCachedBankSlotCount(bagData)
+                for slot = 1, slotCount do
+                    local item = GetCachedBankSlot(bagData, slot)
+                    local itemLink = item and item.itemLink or nil
+                    local itemID = item and (item.itemID or (itemLink and tonumber(itemLink:match("item:(%d+)")))) or nil
+                    local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID = GetItemDetails(itemLink, itemID, includeFullDetails)
+                    slots[#slots + 1] = {
+                        bagID = bagID,
+                        slot = slot,
+                        item = item and {
+                            iconFileID = item.iconFileID,
+                            stackCount = item.stackCount,
+                            quality = item.quality or itemQuality,
+                            isQuestItem = item.isQuestItem,
+                            itemLink = itemLink,
+                            itemID = itemID,
+                            name = itemName,
+                            itemLevel = itemLevel,
+                            itemTypeName = itemTypeName,
+                            subTypeName = subTypeName,
+                            equipLoc = equipLoc,
+                            sellPrice = sellPrice,
+                            classID = classID,
+                            subClassID = subClassID,
+                        } or nil,
+                    }
+                end
+            end
+        end
+        if IsVisualSortEnabled() and ns.Sorter and ns.Sorter.SortDisplayEntries then
+            slots = ns.Sorter:SortDisplayEntries(slots)
+        end
+        return slots
+    end
     for _, bagID in ipairs(BANK_BAGS) do
         if bagID == -1 or self.visibleBags[bagID] ~= false then
             local slotCount = GetNumSlotsInBag(bagID)
@@ -1902,6 +2195,9 @@ function OneBank:BuildLiveSlots()
             end
         end
     end
+    if IsVisualSortEnabled() and ns.Sorter and ns.Sorter.SortDisplayEntries then
+        slots = ns.Sorter:SortDisplayEntries(slots)
+    end
     return slots
 end
 
@@ -1917,7 +2213,7 @@ function OneBank:Refresh(layoutOnly)
     end
 
     local searching = self.searchText and self.searchText ~= ""
-    local cachedLayout = layoutOnly and self._layoutModel or nil
+    local cachedLayout = (layoutOnly and not IsVisualSortEnabled()) and self._layoutModel or nil
     local all = cachedLayout and cachedLayout.all or self:BuildLiveSlots()
     local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
     local totalSlots = cachedLayout and cachedLayout.totalSlots or nil
@@ -1928,6 +2224,7 @@ function OneBank:Refresh(layoutOnly)
     local sectionHeaders = {}
     local sectionEmptyLabels = {}
     local sectionPlaceholders = {}
+    local sectionDropTargets = {}
 
     local cols = self.columns
     local size = self.slotSize
@@ -1948,6 +2245,8 @@ function OneBank:Refresh(layoutOnly)
     local categoryConfig = ns.Categories and ns.Categories:GetConfig("bank") or nil
     local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
+    local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
+    local visualSortEnabled = IsVisualSortEnabled()
     local sectionHeaderHeight = 14
     local sectionGapY = math.max(spacing * 2, spacing + 6)
     local uncategorized = cachedLayout and cachedLayout.uncategorized or {}
@@ -1971,7 +2270,31 @@ function OneBank:Refresh(layoutOnly)
         end
     end
 
-    if not cachedLayout then
+    if not cachedLayout and visualSortEnabled then
+        for _, entry in ipairs(all) do
+            local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
+            if category then
+                local key = category.id or category.name
+                local section = key and categoryByID[key] or nil
+                if section then
+                    section.entries[#section.entries + 1] = entry
+                else
+                    uncategorized[#uncategorized + 1] = entry
+                end
+            else
+                uncategorized[#uncategorized + 1] = entry
+            end
+        end
+
+        self._layoutModel = {
+            all = all,
+            occupiedSlots = occupiedSlots,
+            totalSlots = totalSlots,
+            uncategorized = uncategorized,
+            splitSections = splitSections,
+            categorySections = categorySections,
+        }
+    elseif not cachedLayout then
         local splitByBag = {}
         for _, entry in ipairs(all) do
             local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
@@ -2092,20 +2415,40 @@ local function AddCategoryGrid(sections)
         return bestCol, bestHeight or 0
     end
 
-    for _, section in ipairs(sections) do
+    local fixedTopOffset = 0
+    local fixedRowHeight = 0
+    local fixedTotalHeight = nil
+    for index, section in ipairs(sections) do
         local sectionCols = GetSectionCols(section)
-        local startCol, topOffset = FindMasonrySlot(sectionCols)
+        local startCol, topOffset
+        if categoryLayoutMode == "fixed" then
+            local lane = (index - 1) % categoryColumnCount
+            if lane == 0 and index > 1 then
+                fixedTopOffset = fixedTopOffset + fixedRowHeight + sectionGapY
+                fixedRowHeight = 0
+            end
+            sectionCols = math.min(sectionCols, defaultSectionCols)
+            startCol = lane * (defaultSectionCols + gridGapCols)
+            topOffset = fixedTopOffset
+        else
+            startCol, topOffset = FindMasonrySlot(sectionCols)
+        end
         local entries = section.entries or {}
         local minSlots = math.max(0, tonumber(section.minSlots) or 0)
         local visibleSlots = (#entries == 0) and math.max(1, minSlots) or math.max(#entries, minSlots)
         local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
         local headerHeight = (section.title and section.title ~= "") and sectionHeaderHeight or 0
         local sectionHeight = headerHeight + slotRows * size + math.max(0, slotRows - 1) * spacing
-        if topOffset > 0 then
-            topOffset = topOffset + sectionGapY
-        end
-        for col = startCol, startCol + sectionCols - 1 do
-            columnHeights[col] = topOffset + sectionHeight
+        if categoryLayoutMode == "fixed" then
+            fixedRowHeight = math.max(fixedRowHeight, sectionHeight)
+            fixedTotalHeight = fixedTopOffset + fixedRowHeight
+        else
+            if topOffset > 0 then
+                topOffset = topOffset + sectionGapY
+            end
+            for col = startCol, startCol + sectionCols - 1 do
+                columnHeights[col] = topOffset + sectionHeight
+            end
         end
         layouts[#layouts + 1] = {
             section = section,
@@ -2125,6 +2468,7 @@ local function AddCategoryGrid(sections)
         local sectionCols = layout.sectionCols
         local startRow = currentRow
         local headerOffset = extraYOffset + (layout.topOffset or 0)
+        local sectionTopOffset = headerOffset
 
         if section.title and section.title ~= "" then
             sectionHeaders[#sectionHeaders + 1] = {
@@ -2137,6 +2481,19 @@ local function AddCategoryGrid(sections)
             headerOffset = headerOffset + sectionHeaderHeight
         end
 
+        if section.category then
+            local slotRows = math.max(1, math.ceil(visibleSlots / sectionCols))
+            local targetHeight = (headerOffset - sectionTopOffset) + slotRows * size + math.max(0, slotRows - 1) * spacing
+            sectionDropTargets[#sectionDropTargets + 1] = {
+                category = section.category,
+                col = startCol,
+                row = startRow,
+                yOffset = sectionTopOffset,
+                width = sectionCols * size + math.max(0, sectionCols - 1) * spacing,
+                height = targetHeight,
+            }
+        end
+
         for idx, entry in ipairs(entries) do
             local zero = idx - 1
             positioned[#positioned + 1] = {
@@ -2144,6 +2501,7 @@ local function AddCategoryGrid(sections)
                 col = startCol + (zero % sectionCols),
                 row = startRow + math.floor(zero / sectionCols),
                 yOffset = headerOffset,
+                category = section.category,
             }
         end
         for idx = #entries + 1, visibleSlots do
@@ -2167,8 +2525,12 @@ local function AddCategoryGrid(sections)
     end
 
     local totalHeight = 0
-    for col = 0, cols - 1 do
-        totalHeight = math.max(totalHeight, columnHeights[col] or 0)
+    if categoryLayoutMode == "fixed" then
+        totalHeight = fixedTotalHeight or 0
+    else
+        for col = 0, cols - 1 do
+            totalHeight = math.max(totalHeight, columnHeights[col] or 0)
+        end
     end
     extraYOffset = extraYOffset + math.max(sectionHeaderHeight + size, totalHeight)
     hasContent = true
@@ -2216,15 +2578,26 @@ end
             b:Show()
         else
             local isMatch = ItemMatchesSearch(info.item, self.searchText)
-            b.bagID = info.bagID
-            b.slot = info.slot
-            b.BagID = info.bagID
-            b.SlotID = info.slot
+            local readOnly = IsBankViewMode()
+            b.viewBagID = info.bagID
+            b.viewSlot = info.slot
+            b.bagID = readOnly and nil or info.bagID
+            b.slot = readOnly and nil or info.slot
+            b.BagID = readOnly and nil or info.bagID
+            b.SlotID = readOnly and nil or info.slot
             b.itemData = info.item
-            b:SetID(info.slot)
-            b:SetAttribute("type", "item")
-            b:SetAttribute("bag", info.bagID)
-            b:SetAttribute("slot", info.slot)
+            b.category = pos.category
+            b.readOnly = readOnly
+            b:SetID(readOnly and 0 or info.slot)
+            if readOnly then
+                b:SetAttribute("type", nil)
+                b:SetAttribute("bag", nil)
+                b:SetAttribute("slot", nil)
+            else
+                b:SetAttribute("type", "item")
+                b:SetAttribute("bag", info.bagID)
+                b:SetAttribute("slot", info.slot)
+            end
             if b.DebugSlotText and IsDebugEnabled() then
                 b.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
                 b.DebugSlotText:Show()
@@ -2246,7 +2619,11 @@ end
                 if SetItemButtonQuality then
                     SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
                 end
-                UpdateItemCooldown(b, info.bagID, info.slot)
+                if readOnly then
+                    ClearItemCooldown(b)
+                else
+                    UpdateItemCooldown(b, info.bagID, info.slot)
+                end
                 local alpha = (searching and not isMatch) and 0.22 or 1
                 b:SetAlpha(alpha)
                 b._baseAlpha = alpha
@@ -2277,11 +2654,14 @@ end
             if ns.Plugins then
                 ns.Plugins:Apply(b, info, "oneBank")
             end
-            b:EnableMouse(not self.sortingActive)
+            b:EnableMouse(readOnly or not self.sortingActive)
             b:Show()
         end
     end
     for i = used + 1, #self.buttons do
+        self.buttons[i].readOnly = nil
+        self.buttons[i].viewBagID = nil
+        self.buttons[i].viewSlot = nil
         if self.buttons[i].DebugSlotText then
             self.buttons[i].DebugSlotText:Hide()
         end
@@ -2304,6 +2684,30 @@ end
     for i = #sectionPlaceholders + 1, #placeholders do
         ConfigureCategoryPlaceholder(placeholders[i], self, nil)
         placeholders[i]:Hide()
+    end
+
+    self.sectionDropTargets = self.sectionDropTargets or {}
+    for i, target in ipairs(sectionDropTargets) do
+        local frame = self.sectionDropTargets[i]
+        if not frame then
+            frame = CreateFrame("Frame", nil, self.frame.content, "BackdropTemplate")
+            frame:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8X8",
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                edgeSize = 2,
+            })
+            self.sectionDropTargets[i] = frame
+        end
+        frame:SetFrameLevel((self.frame.content and self.frame.content:GetFrameLevel() or BANK_FRAME_LEVEL) + 90)
+        frame:SetSize(target.width or size, target.height or size)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + (target.col or 0) * (size + spacing), -gridInsetY - (target.row or 0) * (size + spacing) - (target.yOffset or 0))
+        ConfigureCategoryDropTarget(frame, self, target)
+        frame:Show()
+    end
+    for i = #sectionDropTargets + 1, #(self.sectionDropTargets or {}) do
+        ConfigureCategoryDropTarget(self.sectionDropTargets[i], self, nil)
+        self.sectionDropTargets[i]:Hide()
     end
 
     local categoryOverlay = self:GetCategoryOverlay() or self.frame.content
@@ -2518,10 +2922,20 @@ function OneBank:ApplySettings()
         self.frame.LeftResizeGrip:EnableMouse(not cfg.locked)
         self.frame.LeftResizeGrip:SetAlpha(cfg.locked and 0.25 or 1)
     end
-    ApplyWindowAppearance(self.frame, cfg)
-    if self.frame.RailToggleButton then
-        self.frame.RailToggleButton:SetAlpha(self.showBagRail and 1 or 0.6)
-    end
+        ApplyWindowAppearance(self.frame, cfg)
+        if self.frame.CustomTitle then
+            local bankTitle = BANK or "Bank"
+            if IsBankViewMode() then
+                local character = GetViewedBankCharacterData()
+                local name = character and character.name or UnitName("player") or "Player"
+                bankTitle = ("%s - %s"):format(name, bankTitle)
+            end
+            self.frame.CustomTitle:SetText(bankTitle)
+        end
+        if self.frame.RailToggleButton then
+            self.frame.RailToggleButton:SetShown(not IsBankViewMode())
+            self.frame.RailToggleButton:SetAlpha(self.showBagRail and 1 or 0.6)
+        end
     self:UpdateSearchLayout()
 end
 
@@ -2537,6 +2951,8 @@ function OneBank:ResetPosition()
 end
 
 function OneBank:Show()
+    self.viewMode = false
+    self.viewCharacterKey = nil
     self:CreateFrame()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBank()
@@ -2548,6 +2964,16 @@ function OneBank:Show()
     end
 end
 
+function OneBank:OpenViewMode(characterKey)
+    self.viewMode = true
+    self.viewCharacterKey = characterKey or GetCurrentCharacterKey()
+    self:CreateFrame()
+    self:ApplySettings()
+    EnsureStackSplitFrameAboveBank()
+    self.frame:Show()
+    self:Refresh()
+end
+
 function OneBank:Hide()
     if self.frame then
         self.frame:Hide()
@@ -2555,6 +2981,10 @@ function OneBank:Hide()
 end
 
 function LunaBagsOneBank_Close()
+    if ns.OneBank and ns.OneBank.viewMode then
+        ns.OneBank:Hide()
+        return
+    end
     if CloseBankFrame then
         CloseBankFrame()
         return
@@ -2588,6 +3018,11 @@ function LunaBagsOneBank_SearchToggleClicked()
 end
 
 function LunaBagsOneBank_SortClicked()
+    if IsBankViewMode() or IsVisualSortEnabled() then
+        OneBank._layoutModel = nil
+        OneBank:Refresh()
+        return
+    end
     if SortBankBags then
         SortBankBags()
     elseif C_Container and C_Container.SortBankBags then
@@ -2676,7 +3111,7 @@ function LunaBagsOneBank_ItemButtonOnEnter(button)
     else
         GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
     end
-    if button.bagID and button.slot then
+    if (button.bagID and button.slot) or (button.viewBagID and button.viewSlot) then
         if button.UpdateTooltip then
             button:UpdateTooltip()
         end

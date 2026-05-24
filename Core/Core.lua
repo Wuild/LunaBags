@@ -115,32 +115,97 @@ local defaults = {
         },
         plugins = {
             qualityBorder = true,
+            equipmentSetBorder = true,
             trashIcon = true,
         },
         sorting = {
             priorityItemIDs = "6948",
             reverseSlotOrder = false,
+            visualOnly = false,
             rules = {
                 { key = "priority", direction = "asc", enabled = true },
-                { key = "quality", direction = "desc", enabled = true },
-                { key = "itemLevel", direction = "desc", enabled = true },
                 { key = "classOrder", direction = "asc", enabled = true },
                 { key = "classID", direction = "asc", enabled = true },
                 { key = "subClassID", direction = "asc", enabled = true },
                 { key = "equipLoc", direction = "asc", enabled = true },
+                { key = "quality", direction = "desc", enabled = true },
+                { key = "itemLevel", direction = "desc", enabled = true },
                 { key = "name", direction = "asc", enabled = true },
                 { key = "itemID", direction = "asc", enabled = true },
                 { key = "count", direction = "desc", enabled = true },
             },
         },
         categories = {
-            enabled = false,
-            columns = 1,
-            nextID = 1,
-            list = {},
+            bags = {
+                enabled = false,
+                columns = 1,
+                layout = "masonry",
+                nextID = 1,
+                list = {},
+            },
+            bank = {
+                enabled = false,
+                columns = 1,
+                layout = "masonry",
+                nextID = 1,
+                list = {},
+            },
         },
     },
 }
+
+local OLD_DEFAULT_SORT_RULES = {
+    { key = "priority", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "itemLevel", direction = "desc", enabled = true },
+    { key = "classOrder", direction = "asc", enabled = true },
+    { key = "classID", direction = "asc", enabled = true },
+    { key = "subClassID", direction = "asc", enabled = true },
+    { key = "equipLoc", direction = "asc", enabled = true },
+    { key = "name", direction = "asc", enabled = true },
+    { key = "itemID", direction = "asc", enabled = true },
+    { key = "count", direction = "desc", enabled = true },
+}
+
+local function CopySortRules(rules)
+    local copy = {}
+    for index, rule in ipairs(rules or {}) do
+        copy[index] = {
+            key = rule.key,
+            direction = rule.direction,
+            enabled = rule.enabled ~= false,
+        }
+    end
+    return copy
+end
+
+local function SortRulesMatch(actual, expected)
+    if type(actual) ~= "table" or #actual ~= #expected then
+        return false
+    end
+    for index, expectedRule in ipairs(expected) do
+        local actualRule = actual[index]
+        if type(actualRule) ~= "table"
+            or actualRule.key ~= expectedRule.key
+            or (actualRule.direction == "desc" and "desc" or "asc") ~= expectedRule.direction
+            or (actualRule.enabled ~= false) ~= (expectedRule.enabled ~= false)
+        then
+            return false
+        end
+    end
+    return true
+end
+
+function LunaBags:MigrateDefaultSortRules()
+    local sorting = self.db and self.db.profile and self.db.profile.sorting
+    if not sorting or sorting._defaultRulesVersion == 2 then
+        return
+    end
+    if SortRulesMatch(sorting.rules, OLD_DEFAULT_SORT_RULES) then
+        sorting.rules = CopySortRules(defaults.profile.sorting.rules)
+    end
+    sorting._defaultRulesVersion = 2
+end
 
 function LunaBags:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("LunaBagsDB", defaults, true)
@@ -160,6 +225,7 @@ function LunaBags:OnInitialize()
         self.db.profile.ui.headerOpacity = self.db.profile.ui.headerOpacity or source.headerOpacity
         self.db.profile.ui._migratedSharedAppearance = true
     end
+    self:MigrateDefaultSortRules()
     self:RegisterChatCommand("lunabags", "HandleSlashCommand")
     self:RegisterChatCommand("lb", "HandleSlashCommand")
 end
