@@ -16,9 +16,10 @@ ns.Sorter = Sorter
 local ticker = CreateFrame("Frame")
 local elapsed = 0
 local STEP_INTERVAL = 0
-local MAX_STEPS_PER_TICK = 30
+local MAX_STEPS_PER_TICK = 3
 local MAX_IDLE_TICKS = 120
 local REFRESH_INTERVAL = 0.08
+local MOVE_SETTLE_DELAY = 0.12
 local HEARTHSTONE_ID = 6948
 local CLASS_MISC = LE_ITEM_CLASS_MISCELLANEOUS or 15
 local SUBCLASS_MISC_MOUNT = LE_ITEM_MISCELLANEOUS_MOUNT or 5
@@ -80,11 +81,11 @@ local CLASS_ORDER = {
 
 local DEFAULT_SORT_RULES = {
     { key = "priority", direction = "asc", enabled = true },
-    { key = "classOrder", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
     { key = "classID", direction = "asc", enabled = true },
     { key = "subClassID", direction = "asc", enabled = true },
+    { key = "classOrder", direction = "asc", enabled = true },
     { key = "equipLoc", direction = "asc", enabled = true },
-    { key = "quality", direction = "desc", enabled = true },
     { key = "itemLevel", direction = "desc", enabled = true },
     { key = "name", direction = "asc", enabled = true },
     { key = "itemID", direction = "asc", enabled = true },
@@ -420,7 +421,7 @@ local function BuildSpaces(bags)
                 bagFamilyMask = bagFamilyMask,
                 bagSpecialtyClass = bagSpecialtyClass,
                 item = item,
-                locked = item.userLocked,
+                locked = item.userLocked and not item.empty,
             }
             item.space = space
             spaces[#spaces + 1] = space
@@ -536,7 +537,7 @@ function Sorter:SortDisplayEntries(entries)
     local fillIndexes = {}
 
     for index, entry in ipairs(entries) do
-        local locked = entry and IsUserLockedSlot(entry.bagID, entry.slot)
+        local locked = entry and entry.item and IsUserLockedSlot(entry.bagID, entry.slot)
         if locked then
             result[index] = entry
         else
@@ -738,6 +739,9 @@ function Sorter:MoveItem(fromSpace, toSpace)
     end
     self.lastMoveFrom = fromKey
     self.lastMoveTo = toKey
+    if GetTime then
+        self.waitUntil = GetTime() + MOVE_SETTLE_DELAY
+    end
     return true
 end
 
@@ -816,9 +820,13 @@ end
 function Sorter:Step()
     if not self.running then return end
     if InCombatLockdown and InCombatLockdown() then self:Stop(); return end
+    if self.waitUntil and GetTime and GetTime() < self.waitUntil then
+        return "wait"
+    end
+    self.waitUntil = nil
     if CursorHasItem and CursorHasItem() then
         if ClearCursor then ClearCursor() end
-        return "pending"
+        return "wait"
     end
 
     local state = self:StepOnce()
@@ -828,6 +836,9 @@ function Sorter:Step()
     end
     if state == "pending" then
         HandleIdleState(self, state)
+        return state
+    end
+    if state == "wait" then
         return state
     end
     if state == "done" then
@@ -847,6 +858,7 @@ function Sorter:Start()
     self.lastRefresh = 0
     self.lastMoveFrom = nil
     self.lastMoveTo = nil
+    self.waitUntil = nil
     if ns and ns.LunaBags and ns.LunaBags.BeginSortSession then ns.LunaBags:BeginSortSession() end
     if self._onStart then self._onStart() elseif ns.OneBag and ns.OneBag.SetSortingState then ns.OneBag:SetSortingState(true) end
 end
@@ -857,6 +869,7 @@ function Sorter:Stop()
     if self._onStop then self._onStop() elseif ns.OneBag and ns.OneBag.SetSortingState then ns.OneBag:SetSortingState(false) end
     self._onStart = nil
     self._onStop = nil
+    self.waitUntil = nil
 end
 
 function Sorter:SortBags()

@@ -1,24 +1,30 @@
 local _, ns = ...
 
-local OneBank = {
-    frame = nil,
-    buttons = {},
-    bagButtons = {},
-    columns = 14,
-    slotSize = 36,
-    spacing = 4,
-    searchText = "",
-    searchVisible = false,
-    showBagRail = true,
-    visibleBags = {},
-    sortingActive = false,
-    viewMode = false,
-    viewCharacterKey = nil,
-    _closingBankFrame = false,
-    draggedCategoryItem = nil,
-}
+local OneBank = ns.LunaBags and ns.LunaBags:NewModule("OneBank") or {}
+OneBank.frame = nil
+OneBank.buttons = {}
+OneBank.bagButtons = {}
+OneBank.columns = 14
+OneBank.slotSize = 36
+OneBank.spacing = 4
+OneBank.searchText = ""
+OneBank.searchVisible = false
+OneBank.showBagRail = true
+OneBank.visibleBags = {}
+OneBank.sortingActive = false
+OneBank.viewMode = false
+OneBank.viewCharacterKey = nil
+OneBank._closingBankFrame = false
+OneBank.draggedCategoryItem = nil
 
 ns.OneBank = OneBank
+
+function OneBank:OnDisable()
+    self:Hide()
+    if ns.LunaBags and ns.LunaBags.RestoreDefaultBankFrame then
+        ns.LunaBags:RestoreDefaultBankFrame()
+    end
+end
 
 local BANK_BAGS = { -1, 5, 6, 7, 8, 9, 10, 11 }
 local BANK_BAG_SLOTS = { 5, 6, 7, 8, 9, 10, 11 }
@@ -2123,8 +2129,21 @@ function OneBank:AcquireButton(index)
 end
 
 function OneBank:BuildLiveSlots()
-    local slots = {}
     local includeFullDetails = (self.searchText and self.searchText ~= "") or IsVisualSortEnabled()
+    local visibleKey = {}
+    for _, bagID in ipairs(BANK_BAGS) do
+        visibleKey[#visibleKey + 1] = tostring(bagID) .. "=" .. tostring(bagID == -1 or self.visibleBags[bagID] ~= false)
+    end
+    local cacheKey = table.concat(visibleKey, ";") .. "|view=" .. tostring(IsBankViewMode() and (self.viewCharacterKey or "cached") or "current")
+    if self._slotCache
+        and self._slotCacheDirty ~= true
+        and self._slotCacheKey == cacheKey
+        and (not includeFullDetails or self._slotCacheFullDetails == true)
+    then
+        return self._slotCache
+    end
+
+    local slots = {}
     if IsBankViewMode() then
         local character = GetViewedBankCharacterData()
         for _, bagID in ipairs(BANK_BAGS) do
@@ -2162,6 +2181,10 @@ function OneBank:BuildLiveSlots()
         if IsVisualSortEnabled() and ns.Sorter and ns.Sorter.SortDisplayEntries then
             slots = ns.Sorter:SortDisplayEntries(slots)
         end
+        self._slotCache = slots
+        self._slotCacheKey = cacheKey
+        self._slotCacheFullDetails = includeFullDetails == true
+        self._slotCacheDirty = nil
         return slots
     end
     for _, bagID in ipairs(BANK_BAGS) do
@@ -2198,7 +2221,16 @@ function OneBank:BuildLiveSlots()
     if IsVisualSortEnabled() and ns.Sorter and ns.Sorter.SortDisplayEntries then
         slots = ns.Sorter:SortDisplayEntries(slots)
     end
+    self._slotCache = slots
+    self._slotCacheKey = cacheKey
+    self._slotCacheFullDetails = includeFullDetails == true
+    self._slotCacheDirty = nil
     return slots
+end
+
+function OneBank:InvalidateSlotCache()
+    self._slotCacheDirty = true
+    self._layoutModel = nil
 end
 
 function OneBank:Refresh(layoutOnly)
@@ -2418,18 +2450,20 @@ local function AddCategoryGrid(sections)
     local fixedTopOffset = 0
     local fixedRowHeight = 0
     local fixedTotalHeight = nil
+    local fixedCurrentCol = 0
     for index, section in ipairs(sections) do
         local sectionCols = GetSectionCols(section)
         local startCol, topOffset
         if categoryLayoutMode == "fixed" then
-            local lane = (index - 1) % categoryColumnCount
-            if lane == 0 and index > 1 then
+            sectionCols = math.min(sectionCols, cols)
+            if fixedCurrentCol > 0 and (fixedCurrentCol + sectionCols) > cols then
                 fixedTopOffset = fixedTopOffset + fixedRowHeight + sectionGapY
                 fixedRowHeight = 0
+                fixedCurrentCol = 0
             end
-            sectionCols = math.min(sectionCols, defaultSectionCols)
-            startCol = lane * (defaultSectionCols + gridGapCols)
+            startCol = fixedCurrentCol
             topOffset = fixedTopOffset
+            fixedCurrentCol = fixedCurrentCol + sectionCols + gridGapCols
         else
             startCol, topOffset = FindMasonrySlot(sectionCols)
         end
@@ -2784,6 +2818,30 @@ function OneBank:SetSortingState(active)
     end
 end
 
+function OneBank:RefreshDeferred(layoutOnly)
+    if not self.frame then
+        return
+    end
+    self._refreshDeferredToken = (self._refreshDeferredToken or 0) + 1
+    local token = self._refreshDeferredToken
+    if layoutOnly ~= true then
+        self._refreshDeferredNeedsFull = true
+    end
+    local function run()
+        if token ~= OneBank._refreshDeferredToken or not OneBank.frame or not OneBank.frame:IsShown() then
+            return
+        end
+        local full = OneBank._refreshDeferredNeedsFull == true
+        OneBank._refreshDeferredNeedsFull = nil
+        OneBank:Refresh(not full)
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, run)
+    else
+        run()
+    end
+end
+
 function OneBank:SavePosition()
     local cfg = GetConfig()
     if not cfg or not self.frame then
@@ -2951,27 +3009,36 @@ function OneBank:ResetPosition()
 end
 
 function OneBank:Show()
+    if ns.LunaBags and ns.LunaBags.IsWindowModuleEnabled and not ns.LunaBags:IsWindowModuleEnabled("oneBank") then
+        return
+    end
     self.viewMode = false
     self.viewCharacterKey = nil
+    self:InvalidateSlotCache()
     self:CreateFrame()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBank()
     self.frame:Show()
     if ns.LunaBags and ns.LunaBags.QueueOpenWindowRefresh then
         ns.LunaBags:QueueOpenWindowRefresh()
+    elseif self.RefreshDeferred then
+        self:RefreshDeferred()
     else
         self:Refresh()
     end
 end
 
 function OneBank:OpenViewMode(characterKey)
+    if ns.LunaBags and ns.LunaBags.IsWindowModuleEnabled and not ns.LunaBags:IsWindowModuleEnabled("oneBank") then
+        return
+    end
     self.viewMode = true
     self.viewCharacterKey = characterKey or GetCurrentCharacterKey()
     self:CreateFrame()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBank()
     self.frame:Show()
-    self:Refresh()
+    self:RefreshDeferred()
 end
 
 function OneBank:Hide()

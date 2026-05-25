@@ -71,6 +71,9 @@ function BagHooks:OpenBags(source)
     if self.toggleLocked and source ~= "UI" then
         return
     end
+    if ns.LunaBags and ns.LunaBags.IsWindowModuleEnabled and not ns.LunaBags:IsWindowModuleEnabled("oneBag") then
+        return
+    end
     if self.isOpen then
         return
     end
@@ -79,7 +82,6 @@ function BagHooks:OpenBags(source)
     if ns.OneBag then
         ns.OneBag:Show()
     end
-    SafeScan()
 
     if LunaBags.db and LunaBags.db.profile.debug then
         LunaBags:Print(("Bags opened (%s)."):format(source or "unknown"))
@@ -134,7 +136,9 @@ function BagHooks:ToggleBags(source)
     if ns.OneBag then
         ns.OneBag:Toggle()
         self.isOpen = ns.OneBag.frame and ns.OneBag.frame:IsShown() or false
-        SafeScan()
+        if not self.isOpen then
+            SafeScan()
+        end
         if LunaBags.db and LunaBags.db.profile.debug then
             LunaBags:Print(("Bags toggled (%s)."):format(source or "unknown"))
         end
@@ -190,4 +194,24 @@ function BagHooks:EnableHooks()
         BagHooks:ToggleBags("ToggleBag")
     end
 
+end
+
+function BagHooks:DisableHooks()
+    if not self.isHooked then
+        return
+    end
+
+    if self._originalOpenAllBags then _G.OpenAllBags = self._originalOpenAllBags end
+    if self._originalToggleAllBags then _G.ToggleAllBags = self._originalToggleAllBags end
+    if self._originalOpenBackpack then _G.OpenBackpack = self._originalOpenBackpack end
+    if self._originalToggleBackpack then _G.ToggleBackpack = self._originalToggleBackpack end
+    if self._originalToggleBag then _G.ToggleBag = self._originalToggleBag end
+
+    self.isHooked = false
+    self.isOpen = false
+    self.toggleLocked = false
+    self.bankOpenLatchUntil = nil
+    if ns.OneBag then
+        ns.OneBag:Hide()
+    end
 end

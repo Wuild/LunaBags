@@ -34,8 +34,8 @@ UI\OneBag.xml
 UI\OneBag.lua
 UI\OneBank.xml
 UI\OneBank.lua
-# UI\OneGuildBank.xml
-# UI\OneGuildBank.lua
+UI\OneGuildBank.xml
+UI\OneGuildBank.lua
 UI\ExtraStyleTextures.xml
 UI\ExtraStyleWindow.lua
 Config\Options.lua

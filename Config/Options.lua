@@ -85,7 +85,8 @@ end
 
 local function GetOneGuildBankSetting(key, fallback)
     LunaBags.db.profile.oneGuildBank = LunaBags.db.profile.oneGuildBank or {}
-    local value = LunaBags.db.profile.oneGuildBank[key]
+    local cfg = LunaBags.db.profile.oneGuildBank
+    local value = cfg[key]
     if value == nil then
         return fallback
     end
@@ -94,7 +95,8 @@ end
 
 local function SetOneGuildBankSetting(key, value)
     LunaBags.db.profile.oneGuildBank = LunaBags.db.profile.oneGuildBank or {}
-    LunaBags.db.profile.oneGuildBank[key] = value
+    local cfg = LunaBags.db.profile.oneGuildBank
+    cfg[key] = value
     RefreshOneGuildBank()
 end
 
@@ -159,6 +161,26 @@ local function SetPluginSetting(key, value)
     RefreshOneGuildBank()
 end
 
+local function GetModuleSetting(key)
+    LunaBags.db.profile.modules = LunaBags.db.profile.modules or {}
+    return LunaBags.db.profile.modules[key] ~= false
+end
+
+local function SetModuleSetting(key, value)
+    LunaBags.db.profile.modules = LunaBags.db.profile.modules or {}
+    LunaBags.db.profile.modules[key] = value ~= false
+    LunaBags.db.profile.modules._reloadRequired = true
+    if LunaBags.ApplyWindowModuleStates then
+        LunaBags:ApplyWindowModuleStates()
+    end
+end
+
+local function ReloadUIIfAvailable()
+    if ReloadUI then
+        ReloadUI()
+    end
+end
+
 local function GetSortingSetting(key, fallback)
     LunaBags.db.profile.sorting = LunaBags.db.profile.sorting or {}
     local value = LunaBags.db.profile.sorting[key]
@@ -175,11 +197,11 @@ end
 
 local DEFAULT_SORT_RULES = {
     { key = "priority", direction = "asc", enabled = true },
-    { key = "classOrder", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
     { key = "classID", direction = "asc", enabled = true },
     { key = "subClassID", direction = "asc", enabled = true },
+    { key = "classOrder", direction = "asc", enabled = true },
     { key = "equipLoc", direction = "asc", enabled = true },
-    { key = "quality", direction = "desc", enabled = true },
     { key = "itemLevel", direction = "desc", enabled = true },
     { key = "name", direction = "asc", enabled = true },
     { key = "itemID", direction = "asc", enabled = true },
@@ -905,6 +927,55 @@ local function BuildGeneralOptions()
                 RefreshOneBank()
             end,
         },
+        modulesHeader = {
+            type = "header",
+            name = "Window Modules",
+            order = 3,
+        },
+        modulesNote = {
+            type = "description",
+            name = "Window modules are Ace modules. Changing these settings requires a UI reload to fully load or unload module code.",
+            order = 4,
+        },
+        moduleOneBag = {
+            type = "toggle",
+            name = "Bags Module",
+            order = 5,
+            get = function() return GetModuleSetting("oneBag") end,
+            set = function(_, value) SetModuleSetting("oneBag", value) end,
+        },
+        moduleOneBank = {
+            type = "toggle",
+            name = "Bank Module",
+            order = 6,
+            get = function() return GetModuleSetting("oneBank") end,
+            set = function(_, value) SetModuleSetting("oneBank", value) end,
+        },
+        moduleOneGuildBank = {
+            type = "toggle",
+            name = "Guild Bank Module",
+            order = 7,
+            get = function() return GetModuleSetting("oneGuildBank") end,
+            set = function(_, value) SetModuleSetting("oneGuildBank", value) end,
+        },
+        reloadRequired = {
+            type = "description",
+            name = function()
+                return (LunaBags.db.profile.modules and LunaBags.db.profile.modules._reloadRequired)
+                    and "|cffffd200Reload UI required for module load changes to fully apply.|r"
+                    or ""
+            end,
+            order = 8,
+        },
+        reloadUI = {
+            type = "execute",
+            name = "Reload UI",
+            order = 9,
+            hidden = function()
+                return not (LunaBags.db.profile.modules and LunaBags.db.profile.modules._reloadRequired)
+            end,
+            func = ReloadUIIfAvailable,
+        },
         actionsHeader = {
             type = "header",
             name = "Actions",
@@ -916,7 +987,7 @@ local function BuildGeneralOptions()
             desc = "Open the combined bag window.",
             order = 11,
             func = function()
-                if ns.OneBag then
+                if GetModuleSetting("oneBag") and ns.OneBag then
                     ns.OneBag:Show()
                 end
             end,
@@ -1218,21 +1289,6 @@ local function BuildGuildBankOptions()
             name = "Guild bank grid density, spacing, scale, and position lock.",
             order = 0,
             fontSize = "medium",
-        },
-        layoutHeader = {
-            type = "header",
-            name = "Layout",
-            order = 0.5,
-        },
-        guildBankColumns = {
-            type = "range",
-            name = "Columns",
-            order = 1,
-            min = 6,
-            max = 16,
-            step = 1,
-            get = function() return GetOneGuildBankSetting("columns", 14) end,
-            set = function(_, value) SetOneGuildBankSetting("columns", value) end,
         },
         guildBankItemSize = {
             type = "range",

@@ -452,8 +452,7 @@ function Categories:ItemMatches(category, item)
     end
 
     if rules.itemIDs and rules.itemIDs ~= "" then
-        hasRule = true
-        if not MatchCSVNumber(item.itemID, rules.itemIDs) then return false end
+        if MatchCSVNumber(item.itemID, rules.itemIDs) then return true end
     end
     if rules.qualityEnabled == true and rules.minQuality ~= nil then
         hasRule = true

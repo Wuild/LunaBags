@@ -1,32 +1,44 @@
 local _, ns = ...
 
-local OneBag = {
-    frame = nil,
-    buttons = {},
-    readonlyButtons = {},
-    keyringButtons = {},
-    bagButtons = {},
-    columns = 11,
-    slotSize = 37,
-    spacing = 4,
-    searchText = "",
-    searchVisible = false,
-    showBagRail = true,
-    splitByBagRows = false,
-    sortingActive = false,
-    lockSlotsMode = false,
-    viewCharacterKey = nil,
-    visibleBags = {},
-    tooltipHooked = false,
-    hoveredItemID = nil,
-    hoveredButton = nil,
-    newItemSignatures = {},
-    newItemGlowUntil = {},
-    newItemTrackingReady = false,
-    draggedCategoryItem = nil,
-}
+local OneBag = ns.LunaBags and ns.LunaBags:NewModule("OneBag") or {}
+OneBag.frame = nil
+OneBag.buttons = {}
+OneBag.readonlyButtons = {}
+OneBag.keyringButtons = {}
+OneBag.bagButtons = {}
+OneBag.columns = 11
+OneBag.slotSize = 37
+OneBag.spacing = 4
+OneBag.searchText = ""
+OneBag.searchVisible = false
+OneBag.showBagRail = true
+OneBag.splitByBagRows = false
+OneBag.sortingActive = false
+OneBag.lockSlotsMode = false
+OneBag.viewCharacterKey = nil
+OneBag.visibleBags = {}
+OneBag.tooltipHooked = false
+OneBag.hoveredItemID = nil
+OneBag.hoveredButton = nil
+OneBag.newItemSignatures = {}
+OneBag.newItemGlowUntil = {}
+OneBag.newItemTrackingReady = false
+OneBag.draggedCategoryItem = nil
 
 ns.OneBag = OneBag
+
+function OneBag:OnEnable()
+    if ns.BagHooks then
+        ns.BagHooks:EnableHooks()
+    end
+end
+
+function OneBag:OnDisable()
+    if ns.BagHooks then
+        ns.BagHooks:DisableHooks()
+    end
+    self:Hide()
+end
 
 local BAG_FRAME_STRATA = "DIALOG"
 local BAG_FRAME_LEVEL = 40
@@ -2711,10 +2723,23 @@ local function GetQuestItemFlag(bagID, slot, itemInfo)
 end
 
 function OneBag:BuildLiveSlots()
-    local slots = {}
     local viewingCurrent = IsViewingCurrentCharacter()
-    local viewedCharacter
     local includeFullDetails = (self.searchText and self.searchText ~= "") or IsVisualSortEnabled()
+    local visibleKey = {}
+    for bagID = 0, 4 do
+        visibleKey[#visibleKey + 1] = tostring(bagID) .. "=" .. tostring(self.visibleBags[bagID] ~= false)
+    end
+    local cacheKey = table.concat(visibleKey, ";") .. "|view=" .. tostring(viewingCurrent and "current" or (self.viewCharacterKey or "cached"))
+    if self._slotCache
+        and self._slotCacheDirty ~= true
+        and self._slotCacheKey == cacheKey
+        and (not includeFullDetails or self._slotCacheFullDetails == true)
+    then
+        return self._slotCache
+    end
+
+    local slots = {}
+    local viewedCharacter
     if not viewingCurrent then
         viewedCharacter = GetViewedCharacterData()
     end
@@ -2779,7 +2804,16 @@ function OneBag:BuildLiveSlots()
         slots = ns.Sorter:SortDisplayEntries(slots)
     end
 
+    self._slotCache = slots
+    self._slotCacheKey = cacheKey
+    self._slotCacheFullDetails = includeFullDetails == true
+    self._slotCacheDirty = nil
     return slots
+end
+
+function OneBag:InvalidateSlotCache()
+    self._slotCacheDirty = true
+    self._layoutModel = nil
 end
 
 function OneBag:BuildKeyringSlots()
@@ -3186,18 +3220,20 @@ function OneBag:Refresh(layoutOnly)
         local fixedTopOffset = 0
         local fixedRowHeight = 0
         local fixedTotalHeight = nil
+        local fixedCurrentCol = 0
         for index, section in ipairs(sections) do
             local sectionCols = GetSectionCols(section)
             local startCol, topOffset
             if categoryLayoutMode == "fixed" then
-                local lane = (index - 1) % categoryColumnCount
-                if lane == 0 and index > 1 then
+                sectionCols = math.min(sectionCols, cols)
+                if fixedCurrentCol > 0 and (fixedCurrentCol + sectionCols) > cols then
                     fixedTopOffset = fixedTopOffset + fixedRowHeight + bagSectionGapY
                     fixedRowHeight = 0
+                    fixedCurrentCol = 0
                 end
-                sectionCols = math.min(sectionCols, defaultSectionCols)
-                startCol = lane * (defaultSectionCols + gridGapCols)
+                startCol = fixedCurrentCol
                 topOffset = fixedTopOffset
+                fixedCurrentCol = fixedCurrentCol + sectionCols + gridGapCols
             else
                 startCol, topOffset = FindMasonrySlot(sectionCols)
             end
@@ -3666,6 +3702,30 @@ function OneBag:Refresh(layoutOnly)
     self:SetSortingState(self.sortingActive == true)
 end
 
+function OneBag:RefreshDeferred(layoutOnly)
+    if not self.frame then
+        return
+    end
+    self._refreshDeferredToken = (self._refreshDeferredToken or 0) + 1
+    local token = self._refreshDeferredToken
+    if layoutOnly ~= true then
+        self._refreshDeferredNeedsFull = true
+    end
+    local function run()
+        if token ~= OneBag._refreshDeferredToken or not OneBag.frame or not OneBag.frame:IsShown() then
+            return
+        end
+        local full = OneBag._refreshDeferredNeedsFull == true
+        OneBag._refreshDeferredNeedsFull = nil
+        OneBag:Refresh(not full)
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, run)
+    else
+        run()
+    end
+end
+
 function OneBag:SavePosition()
     if not self.frame then
         return
@@ -3847,13 +3907,19 @@ function OneBag:ResetPosition()
 end
 
 function OneBag:Show()
+    if ns.LunaBags and ns.LunaBags.IsWindowModuleEnabled and not ns.LunaBags:IsWindowModuleEnabled("oneBag") then
+        return
+    end
     self:CreateFrame()
     self.viewCharacterKey = nil
+    self:InvalidateSlotCache()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBags()
     self.frame:Show()
     if ns.LunaBags and ns.LunaBags.QueueOpenWindowRefresh then
         ns.LunaBags:QueueOpenWindowRefresh()
+    elseif self.RefreshDeferred then
+        self:RefreshDeferred()
     else
         self:Refresh()
     end

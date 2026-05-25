@@ -118,17 +118,22 @@ local defaults = {
             equipmentSetBorder = true,
             trashIcon = true,
         },
+        modules = {
+            oneBag = true,
+            oneBank = true,
+            oneGuildBank = true,
+        },
         sorting = {
             priorityItemIDs = "6948",
             reverseSlotOrder = false,
             visualOnly = false,
             rules = {
                 { key = "priority", direction = "asc", enabled = true },
-                { key = "classOrder", direction = "asc", enabled = true },
+                { key = "quality", direction = "desc", enabled = true },
                 { key = "classID", direction = "asc", enabled = true },
                 { key = "subClassID", direction = "asc", enabled = true },
+                { key = "classOrder", direction = "asc", enabled = true },
                 { key = "equipLoc", direction = "asc", enabled = true },
-                { key = "quality", direction = "desc", enabled = true },
                 { key = "itemLevel", direction = "desc", enabled = true },
                 { key = "name", direction = "asc", enabled = true },
                 { key = "itemID", direction = "asc", enabled = true },
@@ -167,6 +172,27 @@ local OLD_DEFAULT_SORT_RULES = {
     { key = "count", direction = "desc", enabled = true },
 }
 
+local SIMPLIFIED_DEFAULT_SORT_RULES = {
+    { key = "priority", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "classID", direction = "asc", enabled = true },
+    { key = "subClassID", direction = "asc", enabled = true },
+    { key = "count", direction = "desc", enabled = true },
+}
+
+local PRIORITY_QUALITY_DEFAULT_SORT_RULES = {
+    { key = "priority", direction = "asc", enabled = true },
+    { key = "quality", direction = "desc", enabled = true },
+    { key = "classID", direction = "asc", enabled = true },
+    { key = "subClassID", direction = "asc", enabled = true },
+    { key = "classOrder", direction = "asc", enabled = true },
+    { key = "equipLoc", direction = "asc", enabled = true },
+    { key = "itemLevel", direction = "desc", enabled = true },
+    { key = "name", direction = "asc", enabled = true },
+    { key = "itemID", direction = "asc", enabled = true },
+    { key = "count", direction = "desc", enabled = true },
+}
+
 local function CopySortRules(rules)
     local copy = {}
     for index, rule in ipairs(rules or {}) do
@@ -198,17 +224,55 @@ end
 
 function LunaBags:MigrateDefaultSortRules()
     local sorting = self.db and self.db.profile and self.db.profile.sorting
-    if not sorting or sorting._defaultRulesVersion == 2 then
+    if not sorting then
         return
     end
-    if SortRulesMatch(sorting.rules, OLD_DEFAULT_SORT_RULES) then
+    local hasSimplifiedRules = SortRulesMatch(sorting.rules, SIMPLIFIED_DEFAULT_SORT_RULES)
+    if sorting._defaultRulesVersion == 5 and not hasSimplifiedRules then
+        return
+    end
+    if SortRulesMatch(sorting.rules, OLD_DEFAULT_SORT_RULES)
+        or SortRulesMatch(sorting.rules, PRIORITY_QUALITY_DEFAULT_SORT_RULES)
+        or hasSimplifiedRules
+    then
         sorting.rules = CopySortRules(defaults.profile.sorting.rules)
     end
-    sorting._defaultRulesVersion = 2
+    sorting._defaultRulesVersion = 5
+end
+
+function LunaBags:IsWindowModuleEnabled(key)
+    local modules = self.db and self.db.profile and self.db.profile.modules
+    if type(modules) ~= "table" then
+        return true
+    end
+    return modules[key] ~= false
+end
+
+function LunaBags:ApplyWindowModuleStates()
+    local moduleMap = {
+        oneBag = ns.OneBag,
+        oneBank = ns.OneBank,
+        oneGuildBank = ns.OneGuildBank,
+    }
+    for key, module in pairs(moduleMap) do
+        if module and module.SetEnabledState then
+            local enabled = self:IsWindowModuleEnabled(key)
+            module:SetEnabledState(enabled)
+            if self.IsEnabled and self:IsEnabled() then
+                if enabled and module.Enable then
+                    module:Enable()
+                elseif (not enabled) and module.Disable then
+                    module:Disable()
+                end
+            end
+        end
+    end
 end
 
 function LunaBags:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("LunaBagsDB", defaults, true)
+    self.db.profile.modules = self.db.profile.modules or {}
+    self:ApplyWindowModuleStates()
     self.db.profile.plugins = self.db.profile.plugins or {}
     -- Migration: older builds wrote qualityBorder=false while plugin logic was incomplete.
     -- Enable it once unless the user has already been migrated.
@@ -247,14 +311,14 @@ function LunaBags:OnEnable()
     self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", "BAG_UPDATE_DELAYED")
     self:RegisterEvent("BANKFRAME_OPENED")
     self:RegisterEvent("BANKFRAME_CLOSED")
-    --self:RegisterEvent("GUILDBANKFRAME_OPENED")
-    --self:RegisterEvent("GUILDBANKFRAME_CLOSED")
-    --self:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED", "GUILDBANK_UPDATE")
-    --self:RegisterEvent("GUILDBANK_ITEM_LOCK_CHANGED", "GUILDBANK_UPDATE")
-    --self:RegisterEvent("GUILDBANK_UPDATE_TABS", "GUILDBANK_UPDATE")
-    --self:RegisterEvent("GUILDBANK_UPDATE_MONEY", "GUILDBANK_UPDATE")
-    --self:RegisterEvent("GUILDBANKLOG_UPDATE", "GUILDBANK_UPDATE")
-    --self:RegisterEvent("GUILDBANK_TEXT_CHANGED", "GUILDBANK_UPDATE")
+    self:RegisterEvent("GUILDBANKFRAME_OPENED")
+    self:RegisterEvent("GUILDBANKFRAME_CLOSED")
+    self:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED", "GUILDBANK_UPDATE")
+    self:RegisterEvent("GUILDBANK_ITEM_LOCK_CHANGED", "GUILDBANK_UPDATE")
+    self:RegisterEvent("GUILDBANK_UPDATE_TABS", "GUILDBANK_UPDATE")
+    self:RegisterEvent("GUILDBANK_UPDATE_MONEY")
+    self:RegisterEvent("GUILDBANKLOG_UPDATE", "GUILDBANK_UPDATE")
+    self:RegisterEvent("GUILDBANK_TEXT_CHANGED", "GUILDBANK_UPDATE")
     if C_PlayerInteractionManager and Enum and Enum.PlayerInteractionType and Enum.PlayerInteractionType.GuildBanker then
         self:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
         self:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
@@ -266,10 +330,11 @@ function LunaBags:OnEnable()
         if hooksecurefunc then
             if type(_G.BankFrame_Show) == "function" then
                 hooksecurefunc("BankFrame_Show", function()
-                    if BankFrame then
-                        BankFrame:SetAlpha(0)
-                        BankFrame:EnableMouse(false)
+                    if not ns.LunaBags:IsWindowModuleEnabled("oneBank") then
+                        ns.LunaBags:RestoreDefaultBankFrame()
+                        return
                     end
+                    ns.LunaBags:SuppressDefaultBankFrame()
                     if ns.OneBank then
                         ns.OneBank:Show()
                     end
@@ -277,7 +342,7 @@ function LunaBags:OnEnable()
             end
             if type(_G.CloseBankFrame) == "function" then
                 hooksecurefunc("CloseBankFrame", function()
-                    if ns.OneBank then
+                    if ns.LunaBags:IsWindowModuleEnabled("oneBank") and ns.OneBank then
                         ns.OneBank:Hide()
                     end
                     if BankFrame then
@@ -286,63 +351,91 @@ function LunaBags:OnEnable()
                     end
                 end)
             end
-            --if type(_G.GuildBankFrame_Show) == "function" then
-            --    hooksecurefunc("GuildBankFrame_Show", function()
-            --        if GuildBankFrame then
-            --            GuildBankFrame:SetAlpha(0)
-            --            GuildBankFrame:EnableMouse(false)
-            --        end
-            --        if ns.OneGuildBank then
-            --            ns.OneGuildBank:Show()
-            --        end
-            --    end)
-            --end
-            --if type(_G.CloseGuildBankFrame) == "function" then
-            --    hooksecurefunc("CloseGuildBankFrame", function()
-            --        if ns.OneGuildBank then
-            --            ns.OneGuildBank:Hide()
-            --        end
-            --        if GuildBankFrame then
-            --            GuildBankFrame:SetAlpha(1)
-            --            GuildBankFrame:EnableMouse(true)
-            --        end
-            --    end)
-            --end
-            --if type(_G.ShowUIPanel) == "function" then
-            --    hooksecurefunc("ShowUIPanel", function(panel)
-            --        if IsGuildBankPanel(panel) then
-            --            self:SuppressDefaultGuildBankFrame()
-            --            if ns.OneGuildBank then
-            --                ns.OneGuildBank:Show()
-            --            end
-            --        end
-            --    end)
-            --end
-            --if type(_G.HideUIPanel) == "function" then
-            --    hooksecurefunc("HideUIPanel", function(panel)
-            --        if IsGuildBankPanel(panel) and ns.OneGuildBank then
-            --            ns.OneGuildBank:Hide()
-            --        end
-            --    end)
-            --end
-            --if type(_G.GuildBankFrame_LoadUI) == "function" then
-            --    hooksecurefunc("GuildBankFrame_LoadUI", function()
-            --        self:EnsureGuildBankFrameSuppressionHooks()
-            --    end)
-            --end
+            if type(_G.GuildBankFrame_Show) == "function" then
+                hooksecurefunc("GuildBankFrame_Show", function()
+                    if not ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") then
+                        ns.LunaBags:RestoreDefaultGuildBankFrame()
+                        return
+                    end
+                    ns.LunaBags:SuppressDefaultGuildBankFrame()
+                    if ns.OneGuildBank then
+                        ns.OneGuildBank:Show()
+                    end
+                    if ns.BagHooks then
+                        ns.BagHooks:OpenBags("GuildBankOpen")
+                    end
+                end)
+            end
+            if type(_G.CloseGuildBankFrame) == "function" then
+                hooksecurefunc("CloseGuildBankFrame", function()
+                    if ns.LunaBags and not ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") then
+                        ns.LunaBags:RestoreDefaultGuildBankFrame()
+                        return
+                    end
+                    if ns.OneGuildBank then
+                        ns.OneGuildBank:Hide()
+                    end
+                    if ns.BagHooks then
+                        ns.BagHooks:CloseBags("GuildBankClose")
+                    end
+                    if GuildBankFrame then
+                        GuildBankFrame:SetAlpha(1)
+                        GuildBankFrame:EnableMouse(true)
+                    end
+                end)
+            end
+            if type(_G.ShowUIPanel) == "function" then
+                hooksecurefunc("ShowUIPanel", function(panel)
+                    if IsGuildBankPanel(panel) then
+                        if not ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") then
+                            self:RestoreDefaultGuildBankFrame()
+                            return
+                        end
+                        self:SuppressDefaultGuildBankFrame()
+                        if ns.OneGuildBank then
+                            ns.OneGuildBank:Show()
+                        end
+                        if ns.BagHooks then
+                            ns.BagHooks:OpenBags("GuildBankOpen")
+                        end
+                    end
+                end)
+            end
+            if type(_G.HideUIPanel) == "function" then
+                hooksecurefunc("HideUIPanel", function(panel)
+                    if IsGuildBankPanel(panel) then
+                        if not ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") then
+                            self:RestoreDefaultGuildBankFrame()
+                            return
+                        end
+                        if ns.OneGuildBank then
+                            ns.OneGuildBank:Hide()
+                        end
+                        if ns.BagHooks then
+                            ns.BagHooks:CloseBags("GuildBankClose")
+                        end
+                    end
+                end)
+            end
+            if type(_G.GuildBankFrame_LoadUI) == "function" then
+                hooksecurefunc("GuildBankFrame_LoadUI", function()
+                    if not self:IsWindowModuleEnabled("oneGuildBank") then
+                        self:RestoreDefaultGuildBankFrame()
+                        return
+                    end
+                    self:EnsureGuildBankFrameSuppressionHooks()
+                end)
+            end
         end
     end
 
-    self:UpdateCurrentCharacterCache(false)
-    if ns.BagHooks then
-        ns.BagHooks:EnableHooks()
-    end
+    self:UpdateCurrentCharacterCacheDeferred(false, false)
 
     self:Print("Loaded. Type /lunabags for options.")
 end
 
 function LunaBags:SuppressDefaultBankFrame()
-    if not BankFrame then
+    if not BankFrame or not self:IsWindowModuleEnabled("oneBank") then
         return
     end
     BankFrame:SetAlpha(0)
@@ -358,7 +451,7 @@ function LunaBags:RestoreDefaultBankFrame()
 end
 
 function LunaBags:DisableDefaultBankFrame()
-    if self._bankFrameDisabled or not BankFrame then
+    if self._bankFrameDisabled or not BankFrame or not self:IsWindowModuleEnabled("oneBank") then
         return
     end
     self._bankFrameDisabled = true
@@ -379,7 +472,7 @@ function LunaBags:DisableDefaultBankFrame()
 end
 
 function LunaBags:EnsureBankFrameSuppressionHooks()
-    if self._bankFrameSuppressionHooked or not BankFrame then
+    if self._bankFrameSuppressionHooked or not BankFrame or not self:IsWindowModuleEnabled("oneBank") then
         return
     end
     self._bankFrameSuppressionHooked = true
@@ -410,22 +503,22 @@ function LunaBags:QueueOpenWindowRefresh()
 
     if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
         QueueFrameWork(function()
-            if token == self._refreshQueueToken and ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
-                ns.OneBag:Refresh()
+            if token == self._refreshQueueToken and self:IsWindowModuleEnabled("oneBag") and ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
+                if ns.OneBag.RefreshDeferred then ns.OneBag:RefreshDeferred() else ns.OneBag:Refresh() end
             end
         end)
     end
     if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
         QueueFrameWork(function()
-            if token == self._refreshQueueToken and ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
-                ns.OneBank:Refresh()
+            if token == self._refreshQueueToken and self:IsWindowModuleEnabled("oneBank") and ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
+                if ns.OneBank.RefreshDeferred then ns.OneBank:RefreshDeferred() else ns.OneBank:Refresh() end
             end
         end)
     end
     if ns.OneGuildBank and ns.OneGuildBank.frame and ns.OneGuildBank.frame:IsShown() then
         QueueFrameWork(function()
-            if token == self._refreshQueueToken and ns.OneGuildBank and ns.OneGuildBank.frame and ns.OneGuildBank.frame:IsShown() then
-                ns.OneGuildBank:Refresh()
+            if token == self._refreshQueueToken and self:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank and ns.OneGuildBank.frame and ns.OneGuildBank.frame:IsShown() then
+                if ns.OneGuildBank.RefreshDeferred then ns.OneGuildBank:RefreshDeferred() else ns.OneGuildBank:Refresh() end
             end
         end)
     end
@@ -472,7 +565,7 @@ function LunaBags:ADDON_LOADED(addonName)
     if addonName and addonName ~= ADDON_NAME then
         return
     end
-    self:UpdateCurrentCharacterCache(false)
+    self:UpdateCurrentCharacterCacheDeferred(false, false)
     -- Intentionally avoid destructive BankFrame suppression hooks.
 end
 
@@ -500,7 +593,7 @@ function LunaBags:ScheduleStartupScans()
             if not ns.BagData then
                 return
             end
-            self:UpdateCurrentCharacterCache(true)
+            self:UpdateCurrentCharacterCacheDeferred(false, false)
             if self.db and self.db.profile and self.db.profile.debug then
                 self:Print(("Startup scan @ %.1fs (bag capacity=%d, money=%s)"):format(
                     delay,
@@ -513,7 +606,7 @@ function LunaBags:ScheduleStartupScans()
 end
 
 function LunaBags:PLAYER_ENTERING_WORLD()
-    self:UpdateCurrentCharacterCache(false)
+    self:UpdateCurrentCharacterCacheDeferred(false, false)
     self:ScheduleStartupScans()
 end
 
@@ -537,6 +630,13 @@ function LunaBags:EndSortSession()
 end
 
 function LunaBags:BAG_UPDATE_DELAYED()
+    if ns.OneBag and ns.OneBag.InvalidateSlotCache then
+        ns.OneBag:InvalidateSlotCache()
+    end
+    if ns.OneBank and ns.OneBank.InvalidateSlotCache then
+        ns.OneBank:InvalidateSlotCache()
+    end
+
     if self._sortSessionActive then
         self._sortDeferredBagUpdate = true
         local now = GetTime and GetTime() or 0
@@ -575,8 +675,9 @@ function LunaBags:BAG_UPDATE_DELAYED()
     end
     self._lastBagUpdateAt = now
 
+    self:QueueOpenWindowRefresh()
     local includeBank = ns.BagData and ns.BagData.IsBankAvailable and ns.BagData:IsBankAvailable() or false
-    self:UpdateCurrentCharacterCacheDeferred(includeBank == true, true)
+    self:UpdateCurrentCharacterCacheDeferred(includeBank == true, false)
 end
 
 function LunaBags:PLAYER_MONEY()
@@ -591,22 +692,37 @@ function LunaBags:PLAYER_LOGOUT()
 end
 
 function LunaBags:BANKFRAME_OPENED()
+    if not self:IsWindowModuleEnabled("oneBank") then
+        self:RestoreDefaultBankFrame()
+        return
+    end
     self:SuppressDefaultBankFrame()
-    self:BAG_UPDATE_DELAYED()
     if ns.BagHooks then
         local now = GetTime and GetTime() or 0
         ns.BagHooks.bankOpenLatchUntil = now + 1.5
     end
-    if ns.OneBank then
+    if self:IsWindowModuleEnabled("oneBank") and ns.OneBank then
         ns.OneBank:Show()
     end
     if ns.BagHooks then
         ns.BagHooks:OpenBags("BankOpen")
     end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.5, function()
+            if ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneBank") then
+                ns.LunaBags:UpdateCurrentCharacterCacheDeferred(true, false)
+            end
+        end)
+    else
+        self:UpdateCurrentCharacterCacheDeferred(true, false)
+    end
 end
 
 function LunaBags:BANKFRAME_CLOSED()
     self:RestoreDefaultBankFrame()
+    if not self:IsWindowModuleEnabled("oneBank") then
+        return
+    end
     if ns.BagHooks then
         ns.BagHooks:CloseBags("BankClose")
     end
@@ -616,7 +732,7 @@ function LunaBags:BANKFRAME_CLOSED()
 end
 
 function LunaBags:SuppressDefaultGuildBankFrame()
-    if not GuildBankFrame then
+    if not GuildBankFrame or not self:IsWindowModuleEnabled("oneGuildBank") then
         return
     end
     if not GuildBankFrame._LunaBagsOriginalParent and GuildBankFrame.GetParent then
@@ -641,7 +757,7 @@ function LunaBags:RestoreDefaultGuildBankFrame()
 end
 
 function LunaBags:EnsureGuildBankFrameSuppressionHooks()
-    if self._guildBankFrameSuppressionHooked or not GuildBankFrame then
+    if self._guildBankFrameSuppressionHooked or not GuildBankFrame or not self:IsWindowModuleEnabled("oneGuildBank") then
         return
     end
     self._guildBankFrameSuppressionHooked = true
@@ -649,45 +765,90 @@ function LunaBags:EnsureGuildBankFrameSuppressionHooks()
 
     if GuildBankFrame.HookScript then
         GuildBankFrame:HookScript("OnShow", function()
+            if not (ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank")) then
+                return
+            end
             if ns.LunaBags then
                 ns.LunaBags:SuppressDefaultGuildBankFrame()
             end
-            if ns.OneGuildBank then
+            if ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank then
                 ns.OneGuildBank:Show()
+            end
+            if ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") and ns.BagHooks then
+                ns.BagHooks:OpenBags("GuildBankOpen")
+            end
+        end)
+        GuildBankFrame:HookScript("OnHide", function()
+            if not (ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank")) then
+                return
+            end
+            if ns.OneGuildBank then
+                ns.OneGuildBank:Hide()
+            end
+            if ns.BagHooks then
+                ns.BagHooks:CloseBags("GuildBankClose")
             end
         end)
     end
 
     if hooksecurefunc and GuildBankFrame.Show then
         hooksecurefunc(GuildBankFrame, "Show", function()
+            if not (ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank")) then
+                return
+            end
             if ns.LunaBags then
                 ns.LunaBags:SuppressDefaultGuildBankFrame()
             end
-            if ns.OneGuildBank then
+            if ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank then
                 ns.OneGuildBank:Show()
+            end
+            if ns.LunaBags and ns.LunaBags:IsWindowModuleEnabled("oneGuildBank") and ns.BagHooks then
+                ns.BagHooks:OpenBags("GuildBankOpen")
             end
         end)
     end
 end
 
 function LunaBags:GUILDBANKFRAME_OPENED()
+    if not self:IsWindowModuleEnabled("oneGuildBank") then
+        self:RestoreDefaultGuildBankFrame()
+        return
+    end
     self:EnsureGuildBankFrameSuppressionHooks()
     self:SuppressDefaultGuildBankFrame()
-    if ns.OneGuildBank then
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank then
         ns.OneGuildBank:Show()
+    end
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.BagHooks then
+        ns.BagHooks:OpenBags("GuildBankOpen")
     end
 end
 
 function LunaBags:GUILDBANKFRAME_CLOSED()
     self:RestoreDefaultGuildBankFrame()
+    if not self:IsWindowModuleEnabled("oneGuildBank") then
+        return
+    end
+    if ns.BagHooks then
+        ns.BagHooks:CloseBags("GuildBankClose")
+    end
     if ns.OneGuildBank then
         ns.OneGuildBank:Hide()
     end
 end
 
 function LunaBags:GUILDBANK_UPDATE()
-    if ns.OneGuildBank then
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank then
+        if ns.OneGuildBank.InvalidateSlotCache then
+            ns.OneGuildBank:InvalidateSlotCache()
+        end
         ns.OneGuildBank:RefreshIfShown()
+    end
+end
+
+function LunaBags:GUILDBANK_UPDATE_MONEY()
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank and ns.OneGuildBank.RefreshMoneyDisplay then
+        ns.OneGuildBank:RefreshMoneyDisplay()
     end
 end
 
@@ -698,10 +859,17 @@ function LunaBags:PLAYER_INTERACTION_MANAGER_FRAME_SHOW(frameType)
     if GuildBankFrame_LoadUI then
         GuildBankFrame_LoadUI()
     end
+    if not self:IsWindowModuleEnabled("oneGuildBank") then
+        self:RestoreDefaultGuildBankFrame()
+        return
+    end
     self:EnsureGuildBankFrameSuppressionHooks()
     self:SuppressDefaultGuildBankFrame()
-    if ns.OneGuildBank then
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.OneGuildBank then
         ns.OneGuildBank:Show()
+    end
+    if self:IsWindowModuleEnabled("oneGuildBank") and ns.BagHooks then
+        ns.BagHooks:OpenBags("GuildBankOpen")
     end
 end
 
@@ -709,8 +877,15 @@ function LunaBags:PLAYER_INTERACTION_MANAGER_FRAME_HIDE(frameType)
     if not Enum or not Enum.PlayerInteractionType or frameType ~= Enum.PlayerInteractionType.GuildBanker then
         return
     end
+    if not self:IsWindowModuleEnabled("oneGuildBank") then
+        self:RestoreDefaultGuildBankFrame()
+        return
+    end
     if ns.OneGuildBank then
         ns.OneGuildBank:Hide()
+    end
+    if ns.BagHooks then
+        ns.BagHooks:CloseBags("GuildBankClose")
     end
     self:RestoreDefaultGuildBankFrame()
 end
