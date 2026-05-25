@@ -179,6 +179,7 @@ local function GetConfig()
 end
 
 local RefreshGuildBankActionButtons
+local CreateEditorInput
 
 local function MoneyToString(copper)
     if GetMoneyString then
@@ -222,9 +223,9 @@ local function ParseMoneyText(text)
     for amount, unit in text:gmatch("([%d%.]+)([gsc])") do
         local value = tonumber(amount) or 0
         if unit == "g" then
-            total = total + math.floor(value * 10000)
+            total = total + math.floor(value * (COPPER_PER_GOLD or 10000))
         elseif unit == "s" then
-            total = total + math.floor(value * 100)
+            total = total + math.floor(value * (COPPER_PER_SILVER or 100))
         elseif unit == "c" then
             total = total + math.floor(value)
         end
@@ -248,68 +249,137 @@ local function GetGuildBankWithdrawLimit()
     return math.min(daily, funds)
 end
 
-local function ShowGuildBankMoneyPopup(kind)
-    if not StaticPopupDialogs or not StaticPopup_Show then
+local moneyHooksInstalled = false
+
+local function EnsureGuildBankMoneyHooks()
+    if moneyHooksInstalled or not hooksecurefunc then
         return
     end
+    moneyHooksInstalled = true
+    if DepositGuildBankMoney then
+        hooksecurefunc("DepositGuildBankMoney", RefreshGuildBankMoneySoon)
+    end
+    if WithdrawGuildBankMoney then
+        hooksecurefunc("WithdrawGuildBankMoney", RefreshGuildBankMoneySoon)
+    end
+end
 
-    local isDeposit = kind == "deposit"
-    local popupName = isDeposit and "LUNABAGS_GUILDBANK_DEPOSIT" or "LUNABAGS_GUILDBANK_WITHDRAW"
-    if not StaticPopupDialogs[popupName] then
-        StaticPopupDialogs[popupName] = {
-            text = isDeposit and (DEPOSIT or "Deposit") or (WITHDRAW or "Withdraw"),
-            button1 = ACCEPT or OKAY or "OK",
-            button2 = CANCEL or "Cancel",
-            hasEditBox = true,
-            maxLetters = 32,
-            timeout = 0,
-            whileDead = true,
-            hideOnEscape = true,
-            preferredIndex = 3,
-            OnShow = function(self)
-                if self.editBox then
-                    self.editBox:SetText("")
-                    self.editBox:SetFocus()
-                end
-            end,
-            OnAccept = function(self)
-                local copper = ParseMoneyText(self.editBox and self.editBox:GetText() or "")
-                if copper <= 0 then
-                    return
-                end
-                if isDeposit then
-                    copper = math.min(copper, GetMoney and GetMoney() or copper)
-                    if copper > 0 and DepositGuildBankMoney then
-                        DepositGuildBankMoney(copper)
-                        RefreshGuildBankMoneySoon()
-                    end
-                else
-                    copper = math.min(copper, GetGuildBankWithdrawLimit())
-                    if copper > 0 and WithdrawGuildBankMoney then
-                        WithdrawGuildBankMoney(copper)
-                        RefreshGuildBankMoneySoon()
-                    end
-                end
-            end,
-            EditBoxOnEnterPressed = function(self)
-                local parent = self:GetParent()
-                if parent and parent.button1 then
-                    parent.button1:Click()
-                end
-            end,
-            EditBoxOnEscapePressed = function(self)
-                local parent = self:GetParent()
-                if parent then
-                    parent:Hide()
-                end
-            end,
-        }
+local function GetMoneyDialogCopper(dialog)
+    if dialog and dialog.MoneyInput and MoneyInputFrame_GetCopper then
+        return tonumber(MoneyInputFrame_GetCopper(dialog.MoneyInput)) or 0
+    end
+    if dialog and dialog.FallbackEdit then
+        return ParseMoneyText(dialog.FallbackEdit:GetText())
+    end
+    return 0
+end
+
+local function ResetMoneyDialog(dialog)
+    if dialog.MoneyInput and MoneyInputFrame_ResetMoney then
+        MoneyInputFrame_ResetMoney(dialog.MoneyInput)
+    end
+    if dialog.FallbackEdit then
+        dialog.FallbackEdit:SetText("")
+    end
+end
+
+local function CreateGuildBankMoneyDialog()
+    local dialog = CreateFrame("Frame", "LunaBagsGuildBankMoneyDialog", UIParent, "BackdropTemplate")
+    dialog:SetSize(260, 126)
+    dialog:SetFrameStrata("DIALOG")
+    dialog:SetFrameLevel(90)
+    dialog:SetClampedToScreen(true)
+    dialog:EnableMouse(true)
+    dialog:Hide()
+    dialog:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true,
+        tileSize = 32,
+        edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+    })
+
+    dialog.Title = dialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    dialog.Title:SetPoint("TOP", dialog, "TOP", 0, -18)
+
+    local ok, moneyInput = pcall(CreateFrame, "Frame", "LunaBagsGuildBankMoneyInput", dialog, "MoneyInputFrameTemplate")
+    if ok and moneyInput then
+        dialog.MoneyInput = moneyInput
+        moneyInput:SetPoint("TOP", dialog.Title, "BOTTOM", 0, -16)
+        if MoneyInputFrame_SetCopper then
+            MoneyInputFrame_SetCopper(moneyInput, 0)
+        end
+    else
+        dialog.FallbackEdit = CreateEditorInput(dialog, "LunaBagsGuildBankMoneyFallbackEdit", false)
+        dialog.FallbackEdit:SetPoint("TOPLEFT", dialog, "TOPLEFT", 28, -48)
+        dialog.FallbackEdit:SetPoint("RIGHT", dialog, "RIGHT", -28, 0)
+        dialog.FallbackEdit:SetHeight(22)
     end
 
-    local popup = StaticPopup_Show(popupName)
-    if popup and popup.text then
-        local limit = isDeposit and (GetMoney and GetMoney() or 0) or GetGuildBankWithdrawLimit()
-        popup.text:SetText((isDeposit and (DEPOSIT or "Deposit") or (WITHDRAW or "Withdraw")) .. "\n" .. (AVAILABLE or "Available") .. ": " .. MoneyToString(limit))
+    dialog.AcceptButton = CreateFrame("Button", nil, dialog, "UIPanelButtonTemplate")
+    dialog.AcceptButton:SetSize(82, 22)
+    dialog.AcceptButton:SetPoint("BOTTOMRIGHT", dialog, "BOTTOM", -4, 18)
+    dialog.AcceptButton:SetText(ACCEPT or OKAY or "OK")
+
+    dialog.CancelButton = CreateFrame("Button", nil, dialog, "UIPanelButtonTemplate")
+    dialog.CancelButton:SetSize(82, 22)
+    dialog.CancelButton:SetPoint("BOTTOMLEFT", dialog, "BOTTOM", 4, 18)
+    dialog.CancelButton:SetText(CANCEL or "Cancel")
+    dialog.CancelButton:SetScript("OnClick", function(self)
+        self:GetParent():Hide()
+    end)
+
+    dialog:SetScript("OnHide", function(self)
+        ResetMoneyDialog(self)
+    end)
+
+    dialog.AcceptButton:SetScript("OnClick", function(self)
+        local parent = self:GetParent()
+        local copper = GetMoneyDialogCopper(parent)
+        if copper <= 0 then
+            return
+        end
+        if parent.kind == "deposit" then
+            copper = math.min(copper, GetMoney and GetMoney() or copper)
+            if copper > 0 and DepositGuildBankMoney then
+                DepositGuildBankMoney(copper)
+            end
+        else
+            copper = math.min(copper, GetGuildBankWithdrawLimit())
+            if copper > 0 and WithdrawGuildBankMoney then
+                WithdrawGuildBankMoney(copper)
+            end
+        end
+        parent:Hide()
+        RefreshGuildBankMoneySoon()
+    end)
+
+    return dialog
+end
+
+local function ShowGuildBankMoneyPopup(kind)
+    local isDeposit = kind == "deposit"
+    EnsureGuildBankMoneyHooks()
+    local dialog = OneGuildBank.moneyDialog or CreateGuildBankMoneyDialog()
+    OneGuildBank.moneyDialog = dialog
+    dialog.kind = isDeposit and "deposit" or "withdraw"
+    dialog.Title:SetText(isDeposit and (GUILDBANK_DEPOSIT or DEPOSIT or "Deposit") or (GUILDBANK_WITHDRAW or WITHDRAW or "Withdraw"))
+    ResetMoneyDialog(dialog)
+    if OneGuildBank.frame then
+        dialog:ClearAllPoints()
+        dialog:SetPoint("CENTER", OneGuildBank.frame, "CENTER", 0, 0)
+    else
+        dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
+    dialog:Show()
+    if dialog.MoneyInput then
+        local goldBox = _G[dialog.MoneyInput:GetName() .. "Gold"]
+        if goldBox then
+            goldBox:SetFocus()
+        end
+    elseif dialog.FallbackEdit then
+        dialog.FallbackEdit:SetFocus()
     end
 end
 
@@ -522,7 +592,7 @@ local function CreateLabel(parent, text)
     return label
 end
 
-local function CreateEditorInput(parent, name, multiLine)
+CreateEditorInput = function(parent, name, multiLine)
     local editBox
     if multiLine then
         editBox = CreateFrame("EditBox", name, parent, "BackdropTemplate")
@@ -885,6 +955,7 @@ function OneGuildBank:CreateFrame()
     end
 
     EnsureGuildBankUILoaded()
+    EnsureGuildBankMoneyHooks()
 
     local frame = _G.LunaBagsOneGuildBankFrame
     if not frame then
