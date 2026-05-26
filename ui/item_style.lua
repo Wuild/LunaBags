@@ -1,6 +1,7 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local ItemButtonStyle = {}
+local ItemButtonStyle = LunaBags and LunaBags:CreateModule("itemButtonStyle") or {}
 ns.ItemButtonStyle = ItemButtonStyle
 
 local function ResolveQualityBorderColor(quality)
@@ -117,6 +118,7 @@ function ItemButtonStyle.UpdateLockedState(button, item)
 
     local icon = ResolveButtonIcon(button)
     local locked = ItemButtonStyle.IsItemLocked(button, item)
+    button._lunaBagsLocked = locked == true
 
     if icon then
         if icon.SetDesaturated then
@@ -464,15 +466,6 @@ function ItemButtonStyle.Apply(button)
             if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
         end)
         button:HookScript("OnHide", SetIdle)
-
-        button:HookScript("OnUpdate", function(self, elapsed)
-            self._styleLockRefreshElapsed = (self._styleLockRefreshElapsed or 0) + (elapsed or 0)
-            if self._styleLockRefreshElapsed < 0.05 then
-                return
-            end
-            self._styleLockRefreshElapsed = 0
-            ItemButtonStyle.UpdateLockedState(self)
-        end)
 
         if button.RegisterEvent then
             button:RegisterEvent("ITEM_LOCK_CHANGED")

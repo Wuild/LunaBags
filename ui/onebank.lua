@@ -433,6 +433,10 @@ local function GetCurrentCharacterKey()
     return ("%s-%s"):format(name, realm)
 end
 
+local function NormalizeCharacterKey(key)
+    return tostring(key or ""):lower():gsub("%s+", "")
+end
+
 local function GetViewedBankCharacterData()
     if not ns.BagData then
         return nil
@@ -486,34 +490,71 @@ local function GetConfig()
         return nil
     end
     addon.db.profile.oneBank = addon.db.profile.oneBank or {}
-    addon.db.profile.oneBank.perCharacter = addon.db.profile.oneBank.perCharacter or {}
-    local key = GetCurrentCharacterKey()
-    local perChar = addon.db.profile.oneBank.perCharacter[key] or {}
-    addon.db.profile.oneBank.perCharacter[key] = perChar
-    perChar.splitBags = perChar.splitBags or {}
-    perChar.visibleBags = perChar.visibleBags or {}
+    local cfg = addon.db.profile.oneBank
+    cfg.splitBags = cfg.splitBags or {}
+    cfg.visibleBags = cfg.visibleBags or {}
 
     if addon.db.profile.oneBank._viewOptionsPerCharMigrated ~= true then
-        if type(addon.db.profile.oneBank.splitBags) == "table" then
-            for bagID, enabled in pairs(addon.db.profile.oneBank.splitBags) do
-                if perChar.splitBags[bagID] == nil then
-                    perChar.splitBags[bagID] = enabled == true or nil
+        local key = GetCurrentCharacterKey()
+        local old = type(cfg.perCharacter) == "table" and key and cfg.perCharacter[key] or nil
+        if type(old) == "table" and type(old.splitBags) == "table" then
+            for bagID, enabled in pairs(old.splitBags) do
+                if cfg.splitBags[bagID] == nil then
+                    cfg.splitBags[bagID] = enabled == true or nil
                 end
             end
         end
-        if type(addon.db.profile.oneBank.visibleBags) == "table" then
-            for bagID, enabled in pairs(addon.db.profile.oneBank.visibleBags) do
-                if perChar.visibleBags[bagID] == nil then
-                    perChar.visibleBags[bagID] = enabled ~= false
+        if type(old) == "table" and type(old.visibleBags) == "table" then
+            for bagID, enabled in pairs(old.visibleBags) do
+                if cfg.visibleBags[bagID] == nil then
+                    cfg.visibleBags[bagID] = enabled ~= false
                 end
             end
         end
         addon.db.profile.oneBank._viewOptionsPerCharMigrated = true
     end
 
-    addon.db.profile.oneBank._activeCharacter = key
-    addon.db.profile.oneBank._activeCharacterData = perChar
     return addon.db.profile.oneBank
+end
+
+local function GetViewedProfile()
+    local addon = ns.LunaBags
+    if not addon or not addon.db or not addon.db.profile then
+        return nil
+    end
+    if not IsBankViewMode() or not addon.GetProfileKeyForCharacter then
+        return addon.db.profile
+    end
+    local profileKey = addon:GetProfileKeyForCharacter(OneBank.viewCharacterKey)
+    if profileKey and addon.db.profiles and addon.db.profiles[profileKey] then
+        return addon.db.profiles[profileKey]
+    end
+    return addon.db.profile
+end
+
+local function GetBankCategoryConfig()
+    local profile = GetViewedProfile()
+    local categories = profile and profile.categories
+    local cfg = categories and categories.bank
+    if type(cfg) ~= "table" then
+        return nil
+    end
+    cfg.list = cfg.list or {}
+    cfg.columns = tonumber(cfg.columns) or 1
+    cfg.layout = (cfg.layout == "fixed") and "fixed" or "masonry"
+    return cfg
+end
+
+local function MatchBankCategory(item, categoryConfig)
+    if not item or not ns.Categories or not ns.Categories.ItemMatches or not categoryConfig or categoryConfig.enabled ~= true then
+        return nil
+    end
+    for _, category in ipairs(categoryConfig.list or {}) do
+        if ns.Categories:ItemMatches(category, item) then
+            return category
+        end
+    end
+    return nil
 end
 
 local function EnsureVisibleBankBagDefaults(state)
@@ -541,9 +582,8 @@ local function IsBankBagSplitEnabled(bagID)
     if not cfg then
         return false
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.splitBags = perChar.splitBags or {}
-    return perChar.splitBags[bagID] == true
+    cfg.splitBags = cfg.splitBags or {}
+    return cfg.splitBags[bagID] == true
 end
 
 local function SetBankBagSplitEnabled(bagID, enabled)
@@ -551,9 +591,9 @@ local function SetBankBagSplitEnabled(bagID, enabled)
     if not cfg then
         return
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.splitBags = perChar.splitBags or {}
-    perChar.splitBags[bagID] = enabled == true or nil
+    cfg.splitBags = cfg.splitBags or {}
+    cfg.splitBags[bagID] = enabled == true or nil
+    OneBank:InvalidateSlotCache()
 end
 
 local function FormatMoneyText(money, iconSize)
@@ -628,6 +668,34 @@ local function CursorHasAssignableItem()
     return false
 end
 
+local function BuildCursorCategoryItem(itemID)
+    local item = { itemID = itemID }
+    local itemName, itemLink, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID
+    if GetItemInfo then
+        itemName, itemLink, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID = GetItemInfo(itemID)
+    end
+    local getInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+    if getInstant and (classID == nil or subClassID == nil or equipLoc == nil or itemTypeName == nil or subTypeName == nil) then
+        local _, instantTypeName, instantSubTypeName, instantEquipLoc, _, instantClassID, instantSubClassID = getInstant(itemID)
+        itemTypeName = itemTypeName or instantTypeName
+        subTypeName = subTypeName or instantSubTypeName
+        equipLoc = equipLoc or instantEquipLoc
+        classID = classID or instantClassID
+        subClassID = subClassID or instantSubClassID
+    end
+    item.name = itemName
+    item.itemLink = itemLink
+    item.quality = itemQuality
+    item.itemLevel = itemLevel
+    item.itemTypeName = itemTypeName
+    item.subTypeName = subTypeName
+    item.equipLoc = equipLoc
+    item.sellPrice = sellPrice
+    item.classID = classID
+    item.subClassID = subClassID
+    return item
+end
+
 local function AssignCursorItemToCategory(owner, category)
     if owner and owner.viewMode then
         return false
@@ -637,11 +705,15 @@ local function AssignCursorItemToCategory(owner, category)
         return false
     end
 
-    local added = ns.Categories:AddItemIDRule(category, itemID)
+    local item = BuildCursorCategoryItem(itemID)
+    local matchedByRules = ns.Categories.ItemMatchesNonItemIDRules
+        and ns.Categories:ItemMatchesNonItemIDRules(category, item)
+    local added = matchedByRules and false or ns.Categories:AddItemIDRule(category, itemID)
+    local unblacklisted = ns.Categories.RemoveBlacklistItemID and ns.Categories:RemoveBlacklistItemID(category, itemID)
     if ClearCursor then
         ClearCursor()
     end
-    if added then
+    if added or unblacklisted then
         if owner then
             owner._layoutModel = nil
             if owner.Refresh then
@@ -650,12 +722,13 @@ local function AssignCursorItemToCategory(owner, category)
         end
         NotifyOptionsChanged()
         if ns.LunaBags and ns.LunaBags.Print then
-            ns.LunaBags:Print(("Added item ID %d to category %s."):format(itemID, category.name or "Category"))
+            local action = added and "Added" or "Restored"
+            ns.LunaBags:Print(("%s item ID %d to category %s."):format(action, itemID, category.name or "Category"))
         end
     elseif ns.LunaBags and ns.LunaBags.Print then
         ns.LunaBags:Print(("Item ID %d is already assigned to category %s."):format(itemID, category.name or "Category"))
     end
-    return added
+    return added or unblacklisted
 end
 
 local function RemoveDraggedItemFromCategory(owner)
@@ -1667,6 +1740,12 @@ function OneBank:CreateFrame()
     frame.CharacterButton.Icon:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
     do
         local classToken = select(2, UnitClass("player"))
+        if OneBank.viewMode and OneBank.viewCharacterKey and ns.BagData then
+            local viewed = GetViewedBankCharacterData()
+            if viewed and viewed.class then
+                classToken = viewed.class
+            end
+        end
         local coords = CLASS_ICON_TCOORDS and classToken and CLASS_ICON_TCOORDS[classToken]
         if coords then
             frame.CharacterButton.Icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
@@ -1676,13 +1755,71 @@ function OneBank:CreateFrame()
     end
     frame.CharacterButton:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Bank - Current Character")
+        GameTooltip:SetText("Character Bank View")
         GameTooltip:Show()
     end)
     frame.CharacterButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
     frame.CharacterButton:SetScript("OnClick", function()
+        if not LunaBagsBankCharacterMenu then
+            CreateFrame("Frame", "LunaBagsBankCharacterMenu", UIParent, "UIDropDownMenuTemplate")
+        end
+
+        local items = {}
+        local currentKey = GetCurrentCharacterKey()
+        items[#items + 1] = {
+            text = "Current Character",
+            checked = function()
+                return OneBank.viewMode == true and NormalizeCharacterKey(OneBank.viewCharacterKey) == NormalizeCharacterKey(currentKey)
+            end,
+            func = function()
+                OneBank:OpenViewMode(currentKey)
+            end,
+            isNotRadio = true,
+            keepShownOnClick = false,
+        }
+
+        if ns.BagData then
+            for key, c in ns.BagData:IterCharacters() do
+                local selectedKey = key
+                local selectedChar = c
+                local label = (selectedChar and selectedChar.name and selectedChar.realm)
+                    and (selectedChar.name .. " - " .. selectedChar.realm)
+                    or selectedKey
+                items[#items + 1] = {
+                    text = label,
+                    checked = function()
+                        return OneBank.viewMode == true and NormalizeCharacterKey(OneBank.viewCharacterKey) == NormalizeCharacterKey(selectedKey)
+                    end,
+                    func = function()
+                        OneBank:OpenViewMode(selectedKey)
+                    end,
+                    isNotRadio = true,
+                    keepShownOnClick = false,
+                }
+            end
+        end
+
+        if EasyMenu then
+            EasyMenu(items, LunaBagsBankCharacterMenu, "cursor", 0, 0, "MENU")
+        else
+            UIDropDownMenu_Initialize(LunaBagsBankCharacterMenu, function(_, level)
+                if level ~= 1 then
+                    return
+                end
+                for _, entry in ipairs(items) do
+                    local info = UIDropDownMenu_CreateInfo()
+                    info.text = entry.text
+                    info.func = entry.func
+                    info.checked = type(entry.checked) == "function" and entry.checked() or entry.checked
+                    info.isNotRadio = entry.isNotRadio
+                    info.keepShownOnClick = entry.keepShownOnClick
+                    UIDropDownMenu_AddButton(info, level)
+                end
+            end, "MENU")
+            ToggleDropDownMenu(1, nil, LunaBagsBankCharacterMenu, "cursor", 0, 0)
+        end
     end)
 
     if not frame.RailToggleButton then
@@ -2274,7 +2411,7 @@ function OneBank:Refresh(layoutOnly)
     local actualContentWidth = self.frame.ScrollFrame and self.frame.ScrollFrame:GetWidth() or (self.frame.content and self.frame.content:GetWidth()) or desiredContentWidth
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
-    local categoryConfig = ns.Categories and ns.Categories:GetConfig("bank") or nil
+    local categoryConfig = GetBankCategoryConfig()
     local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
@@ -2286,8 +2423,8 @@ function OneBank:Refresh(layoutOnly)
     local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
 
-    if (not cachedLayout) and categoriesEnabled and ns.Categories then
-        for index, category in ipairs(ns.Categories:GetList("bank") or {}) do
+    if (not cachedLayout) and categoriesEnabled and categoryConfig then
+        for index, category in ipairs(categoryConfig.list or {}) do
             if category.enabled ~= false then
                 local key = category.id or category.name or tostring(index)
                 local section = {
@@ -2304,7 +2441,7 @@ function OneBank:Refresh(layoutOnly)
 
     if not cachedLayout and visualSortEnabled then
         for _, entry in ipairs(all) do
-            local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
+            local category = categoriesEnabled and MatchBankCategory(entry.item, categoryConfig) or nil
             if category then
                 local key = category.id or category.name
                 local section = key and categoryByID[key] or nil
@@ -2329,7 +2466,7 @@ function OneBank:Refresh(layoutOnly)
     elseif not cachedLayout then
         local splitByBag = {}
         for _, entry in ipairs(all) do
-            local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bank") or nil
+            local category = categoriesEnabled and MatchBankCategory(entry.item, categoryConfig) or nil
             if category then
                 local key = category.id or category.name
                 local section = key and categoryByID[key] or nil
@@ -2682,6 +2819,7 @@ end
                 b._baseAlpha = alpha
                 UpdateButtonStyleBorderForItem(b, nil)
             end
+            b._lunaBagsSortingDesaturated = self.sortingActive == true
             if b.icon and b.icon.SetDesaturated then
                 b.icon:SetDesaturated(self.sortingActive == true)
             end
@@ -2941,8 +3079,7 @@ function OneBank:SaveVisibleBagsState()
     if not cfg then
         return
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.visibleBags = CopyVisibleBankBagsState(self.visibleBags)
+    cfg.visibleBags = CopyVisibleBankBagsState(self.visibleBags)
 end
 
 function OneBank:ApplySettings()
@@ -2961,8 +3098,7 @@ function OneBank:ApplySettings()
     self.maxHeight = math.max(260, math.min(1200, tonumber(cfg.windowMaxHeight) or BANK_DEFAULT_MAX_HEIGHT))
     self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
     self.showBagRail = cfg.showBagRail ~= false
-    local perChar = cfg._activeCharacterData or {}
-    self.visibleBags = CopyVisibleBankBagsState(perChar.visibleBags or cfg.visibleBags)
+    self.visibleBags = CopyVisibleBankBagsState(cfg.visibleBags)
     self.frame:ClearAllPoints()
     self.frame:SetPoint(cfg.point or "BOTTOMLEFT", UIParent, cfg.point or "BOTTOMLEFT", cfg.x or 34, cfg.y or 126)
     self.frame:SetScale(math.max(0.7, math.min(1.5, tonumber(cfg.scale) or 1)))
@@ -2994,6 +3130,22 @@ function OneBank:ApplySettings()
             self.frame.RailToggleButton:SetShown(not IsBankViewMode())
             self.frame.RailToggleButton:SetAlpha(self.showBagRail and 1 or 0.6)
         end
+        if self.frame.CharacterButton and self.frame.CharacterButton.Icon then
+            local classToken = select(2, UnitClass("player"))
+            if self.viewMode and self.viewCharacterKey and ns.BagData then
+                local viewed = GetViewedBankCharacterData()
+                if viewed and viewed.class then
+                    classToken = viewed.class
+                end
+            end
+            local coords = CLASS_ICON_TCOORDS and classToken and CLASS_ICON_TCOORDS[classToken]
+            self.frame.CharacterButton.Icon:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
+            if coords then
+                self.frame.CharacterButton.Icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+            else
+                self.frame.CharacterButton.Icon:SetTexCoord(0, 1, 0, 1)
+            end
+        end
     self:UpdateSearchLayout()
 end
 
@@ -3014,7 +3166,9 @@ function OneBank:Show()
     end
     self.viewMode = false
     self.viewCharacterKey = nil
-    self:InvalidateSlotCache()
+    if ns.LunaBags and ns.LunaBags.RestoreCurrentCharacterProfile then
+        ns.LunaBags:RestoreCurrentCharacterProfile()
+    end
     self:CreateFrame()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBank()
@@ -3032,8 +3186,26 @@ function OneBank:OpenViewMode(characterKey)
     if ns.LunaBags and ns.LunaBags.IsWindowModuleEnabled and not ns.LunaBags:IsWindowModuleEnabled("oneBank") then
         return
     end
-    self.viewMode = true
-    self.viewCharacterKey = characterKey or GetCurrentCharacterKey()
+    local currentKey = GetCurrentCharacterKey()
+    if not characterKey or characterKey == "" then
+        characterKey = currentKey
+    end
+
+    if NormalizeCharacterKey(characterKey) == NormalizeCharacterKey(currentKey) then
+        self.viewMode = true
+        self.viewCharacterKey = currentKey
+    else
+        local resolvedKey = characterKey
+        if ns.BagData and ns.BagData.GetCharacterData then
+            local data = ns.BagData:GetCharacterData(characterKey)
+            if data and data.name and data.realm then
+                resolvedKey = data.name .. "-" .. data.realm
+            end
+        end
+        self.viewMode = true
+        self.viewCharacterKey = resolvedKey
+    end
+    self:InvalidateSlotCache()
     self:CreateFrame()
     self:ApplySettings()
     EnsureStackSplitFrameAboveBank()

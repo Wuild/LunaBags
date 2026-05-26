@@ -133,13 +133,20 @@ LunaBags stores per-character bag, bank, money, and item-count cache data in `Lu
 
 ## Development Notes
 
-- Main addon startup and defaults: `Core/Core.lua`.
-- Blizzard bag hooks: `Core/BagHooks.lua`.
-- Sorting engine: `Core/Sort.lua`.
-- Category matching: `Core/Categories.lua`.
-- Persistent character cache: `Data/BagData.lua`.
-- Bag UI: `UI/OneBag.lua` and `UI/OneBag.xml`.
-- Bank UI: `UI/OneBank.lua` and `UI/OneBank.xml`.
-- Options UI: `Config/Options.lua`.
+- Main addon startup and defaults: `LunaBags.lua`.
+- Addon file loader: `LunaBags.xml`.
+- Default saved-variable config: `core/configs.lua`.
+- Shared addon helpers: `core/methods.lua`.
+- Blizzard frame integration: `core/blizzard.lua`.
+- Slash commands: `core/commands.lua`.
+- Runtime event handlers: `core/events.lua`.
+- Blizzard bag hooks: `core/hooks.lua`.
+- Sorting engine: `core/sort.lua`.
+- Category matching: `core/categories.lua`.
+- Built-in plugins: `plugins/*.lua`.
+- Persistent character cache: `data/bags.lua`.
+- Bag UI: `ui/onebag.lua` and `ui/onebag.xml`.
+- Bank UI: `ui/onebank.lua` and `ui/onebank.xml`.
+- Options UI: `core/settings.lua`.
 
 After editing Lua/XML files, run `/reload` in game. Saved settings are stored in the account SavedVariables file for `LunaBagsDB`.

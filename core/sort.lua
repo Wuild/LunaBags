@@ -1,15 +1,15 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local Sorter = {
-    running = false,
-    bags = { 0, 1, 2, 3, 4 },
-    _onStart = nil,
-    _onStop = nil,
-    idleTicks = 0,
-    lastRefresh = 0,
-    lastMoveFrom = nil,
-    lastMoveTo = nil,
-}
+local Sorter = LunaBags and LunaBags:CreateModule("sorter") or {}
+Sorter.running = false
+Sorter.bags = Sorter.bags or { 0, 1, 2, 3, 4 }
+Sorter._onStart = nil
+Sorter._onStop = nil
+Sorter.idleTicks = 0
+Sorter.lastRefresh = 0
+Sorter.lastMoveFrom = nil
+Sorter.lastMoveTo = nil
 
 ns.Sorter = Sorter
 

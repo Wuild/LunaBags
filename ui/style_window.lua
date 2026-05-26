@@ -1,8 +1,8 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local ExtraStyleWindow = {
-    frame = nil,
-}
+local ExtraStyleWindow = LunaBags and LunaBags:CreateModule("extraStyleWindow") or {}
+ExtraStyleWindow.frame = nil
 
 ns.ExtraStyleWindow = ExtraStyleWindow
 

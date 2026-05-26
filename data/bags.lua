@@ -1,6 +1,7 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local BagData = {}
+local BagData = LunaBags and LunaBags:CreateModule("bags") or {}
 ns.BagData = BagData
 
 local CContainer = C_Container
@@ -45,6 +46,10 @@ local function EnsureCharacterRecord()
     character.class = select(2, UnitClass("player"))
     character.faction = UnitFactionGroup("player")
     character.location = GetRealZoneText()
+    local addon = ns.LunaBags
+    if addon and addon.db and addon.db.keys and addon.db.keys.profile then
+        character.profileKey = addon.db.keys.profile
+    end
     return character
 end
 

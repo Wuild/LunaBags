@@ -466,8 +466,12 @@ function OneBag:GetCurrentCharacterKey()
     return GetCurrentCharacterKey()
 end
 
+local function NormalizeCharacterKey(key)
+    return tostring(key or ""):lower():gsub("%s+", "")
+end
+
 local function IsViewingCurrentCharacter()
-    return not OneBag.viewCharacterKey or OneBag.viewCharacterKey == GetCurrentCharacterKey()
+    return not OneBag.viewCharacterKey or NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(GetCurrentCharacterKey())
 end
 
 local function GetViewedCharacterData()
@@ -502,6 +506,29 @@ end
 
 function OneBag:GetViewedCharacterData()
     return GetViewedCharacterData()
+end
+
+function OneBag:SetViewCharacterKey(characterKey)
+    local currentKey = GetCurrentCharacterKey()
+    if not characterKey or characterKey == "" or NormalizeCharacterKey(characterKey) == NormalizeCharacterKey(currentKey) then
+        self.viewCharacterKey = nil
+        if ns.LunaBags and ns.LunaBags.RestoreCurrentCharacterProfile then
+            ns.LunaBags:RestoreCurrentCharacterProfile()
+        end
+    else
+        local resolvedKey = characterKey
+        if ns.BagData and ns.BagData.GetCharacterData then
+            local data = ns.BagData:GetCharacterData(characterKey)
+            if data and data.name and data.realm then
+                resolvedKey = data.name .. "-" .. data.realm
+            end
+        end
+        self.viewCharacterKey = resolvedKey
+        if ns.LunaBags and ns.LunaBags.ActivateCharacterProfileView then
+            ns.LunaBags:ActivateCharacterProfileView(resolvedKey)
+        end
+    end
+    self:InvalidateSlotCache()
 end
 
 local function CountSlotsFromTable(slots)
@@ -634,17 +661,49 @@ local function CursorHasAssignableItem()
     return false
 end
 
+local function BuildCursorCategoryItem(itemID)
+    local item = { itemID = itemID }
+    local itemName, itemLink, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID
+    if GetItemInfo then
+        itemName, itemLink, itemQuality, itemLevel, _, itemTypeName, subTypeName, _, equipLoc, _, sellPrice, classID, subClassID = GetItemInfo(itemID)
+    end
+    local getInstant = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+    if getInstant and (classID == nil or subClassID == nil or equipLoc == nil or itemTypeName == nil or subTypeName == nil) then
+        local _, instantTypeName, instantSubTypeName, instantEquipLoc, _, instantClassID, instantSubClassID = getInstant(itemID)
+        itemTypeName = itemTypeName or instantTypeName
+        subTypeName = subTypeName or instantSubTypeName
+        equipLoc = equipLoc or instantEquipLoc
+        classID = classID or instantClassID
+        subClassID = subClassID or instantSubClassID
+    end
+    item.name = itemName
+    item.itemLink = itemLink
+    item.quality = itemQuality
+    item.itemLevel = itemLevel
+    item.itemTypeName = itemTypeName
+    item.subTypeName = subTypeName
+    item.equipLoc = equipLoc
+    item.sellPrice = sellPrice
+    item.classID = classID
+    item.subClassID = subClassID
+    return item
+end
+
 local function AssignCursorItemToCategory(owner, category)
     local itemID = GetCursorItemID()
     if not itemID or not category or not ns.Categories or not ns.Categories.AddItemIDRule then
         return false
     end
 
-    local added = ns.Categories:AddItemIDRule(category, itemID)
+    local item = BuildCursorCategoryItem(itemID)
+    local matchedByRules = ns.Categories.ItemMatchesNonItemIDRules
+        and ns.Categories:ItemMatchesNonItemIDRules(category, item)
+    local added = matchedByRules and false or ns.Categories:AddItemIDRule(category, itemID)
+    local unblacklisted = ns.Categories.RemoveBlacklistItemID and ns.Categories:RemoveBlacklistItemID(category, itemID)
     if ClearCursor then
         ClearCursor()
     end
-    if added then
+    if added or unblacklisted then
         if owner then
             owner._layoutModel = nil
             if owner.Refresh then
@@ -653,12 +712,13 @@ local function AssignCursorItemToCategory(owner, category)
         end
         NotifyOptionsChanged()
         if ns.LunaBags and ns.LunaBags.Print then
-            ns.LunaBags:Print(("Added item ID %d to category %s."):format(itemID, category.name or "Category"))
+            local action = added and "Added" or "Restored"
+            ns.LunaBags:Print(("%s item ID %d to category %s."):format(action, itemID, category.name or "Category"))
         end
     elseif ns.LunaBags and ns.LunaBags.Print then
         ns.LunaBags:Print(("Item ID %d is already assigned to category %s."):format(itemID, category.name or "Category"))
     end
-    return added
+    return added or unblacklisted
 end
 
 local function RemoveDraggedItemFromCategory(owner)
@@ -1071,41 +1131,42 @@ local function GetConfig()
         return nil
     end
     addon.db.profile.oneBag = addon.db.profile.oneBag or {}
-    addon.db.profile.oneBag.perCharacter = addon.db.profile.oneBag.perCharacter or {}
-    local key = GetCurrentCharacterKey()
-    local perChar = addon.db.profile.oneBag.perCharacter[key] or {}
-    addon.db.profile.oneBag.perCharacter[key] = perChar
-    perChar.splitBags = perChar.splitBags or {}
-    perChar.visibleBags = perChar.visibleBags or {}
+    local cfg = addon.db.profile.oneBag
+    cfg.splitBags = cfg.splitBags or {}
+    cfg.visibleBags = cfg.visibleBags or {}
     if addon.db.profile.oneBag._splitBagsMigrated ~= true then
-        local old = addon.db.profile.oneBag.splitBags
-        if type(old) == "table" then
+        local key = GetCurrentCharacterKey()
+        local old = type(cfg.perCharacter) == "table" and key and cfg.perCharacter[key] or nil
+        old = type(old) == "table" and old.splitBags or cfg.splitBags
+        if type(old) == "table" and old ~= cfg.splitBags then
             for bagID, enabled in pairs(old) do
-                if perChar.splitBags[bagID] == nil then
-                    perChar.splitBags[bagID] = enabled == true or nil
+                if cfg.splitBags[bagID] == nil then
+                    cfg.splitBags[bagID] = enabled == true or nil
                 end
             end
         end
         addon.db.profile.oneBag._splitBagsMigrated = true
     end
     if addon.db.profile.oneBag._viewOptionsPerCharMigrated ~= true then
-        if perChar.splitByBagRows == nil and addon.db.profile.oneBag.splitByBagRows ~= nil then
-            perChar.splitByBagRows = addon.db.profile.oneBag.splitByBagRows == true or nil
-        end
-        if perChar.showBagRail == nil and addon.db.profile.oneBag.showBagRail ~= nil then
-            perChar.showBagRail = addon.db.profile.oneBag.showBagRail ~= false
-        end
-        if type(addon.db.profile.oneBag.visibleBags) == "table" then
-            for bagID, enabled in pairs(addon.db.profile.oneBag.visibleBags) do
-                if perChar.visibleBags[bagID] == nil then
-                    perChar.visibleBags[bagID] = enabled ~= false
+        local key = GetCurrentCharacterKey()
+        local old = type(cfg.perCharacter) == "table" and key and cfg.perCharacter[key] or nil
+        if type(old) == "table" then
+            if cfg.splitByBagRows == nil and old.splitByBagRows ~= nil then
+                cfg.splitByBagRows = old.splitByBagRows == true or nil
+            end
+            if cfg.showBagRail == nil and old.showBagRail ~= nil then
+                cfg.showBagRail = old.showBagRail ~= false
+            end
+            if type(old.visibleBags) == "table" then
+                for bagID, enabled in pairs(old.visibleBags) do
+                    if cfg.visibleBags[bagID] == nil then
+                        cfg.visibleBags[bagID] = enabled ~= false
+                    end
                 end
             end
         end
         addon.db.profile.oneBag._viewOptionsPerCharMigrated = true
     end
-    addon.db.profile.oneBag._activeCharacter = key
-    addon.db.profile.oneBag._activeCharacterData = perChar
     return addon.db.profile.oneBag
 end
 
@@ -1114,9 +1175,8 @@ local function IsBagSplitEnabled(bagID)
     if not cfg then
         return false
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.splitBags = perChar.splitBags or {}
-    return perChar.splitBags[bagID] == true
+    cfg.splitBags = cfg.splitBags or {}
+    return cfg.splitBags[bagID] == true
 end
 
 local function SetBagSplitEnabled(bagID, enabled)
@@ -1124,9 +1184,9 @@ local function SetBagSplitEnabled(bagID, enabled)
     if not cfg then
         return
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.splitBags = perChar.splitBags or {}
-    perChar.splitBags[bagID] = enabled == true or nil
+    cfg.splitBags = cfg.splitBags or {}
+    cfg.splitBags[bagID] = enabled == true or nil
+    OneBag:InvalidateSlotCache()
 end
 
 local function GetSortingConfig()
@@ -1838,9 +1898,13 @@ function OneBag:CreateFrame()
             local currentKey = GetCurrentCharacterKey()
             items[#items + 1] = {
                 text = "Current Character",
-                checked = function() return OneBag.viewCharacterKey == nil or OneBag.viewCharacterKey == currentKey end,
+                checked = function() return OneBag.viewCharacterKey == nil or NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(currentKey) end,
                 func = function()
-                    OneBag.viewCharacterKey = nil
+                    if OneBag.SetViewCharacterKey then
+                        OneBag:SetViewCharacterKey(nil)
+                    else
+                        OneBag.viewCharacterKey = nil
+                    end
                     OneBag:ApplySettings()
                     OneBag:Refresh()
                 end,
@@ -1854,9 +1918,9 @@ function OneBag:CreateFrame()
                     local label = (selectedChar and selectedChar.name and selectedChar.realm) and (selectedChar.name .. " - " .. selectedChar.realm) or selectedKey
                     items[#items + 1] = {
                         text = label,
-                        checked = function() return OneBag.viewCharacterKey == selectedKey end,
+                        checked = function() return NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(selectedKey) end,
                         func = function()
-                            OneBag.viewCharacterKey = selectedKey
+                            OneBag:SetViewCharacterKey(selectedKey)
                             OneBag:ApplySettings()
                             OneBag:Refresh()
                         end,
@@ -2618,8 +2682,7 @@ function LunaBagsOneBag_RailToggleClicked()
     local cfg = GetConfig()
     OneBag.showBagRail = not OneBag.showBagRail
     if cfg then
-        local perChar = cfg._activeCharacterData or {}
-        perChar.showBagRail = OneBag.showBagRail == true
+        cfg.showBagRail = OneBag.showBagRail == true
     end
     if OneBag.frame and OneBag.frame.RailToggleButton then
         OneBag.frame.RailToggleButton:SetAlpha(OneBag.showBagRail and 1 or 0.6)
@@ -3572,10 +3635,6 @@ function OneBag:Refresh(layoutOnly)
             button:SetAlpha(alpha)
             button._baseAlpha = alpha
         end
-        UpdateButtonStyleBorderForItem(button, info.item)
-        if ns.Plugins and not button.virtualEmpty then
-            ns.Plugins:Apply(button, info, "oneBag")
-        end
         local lockCross = EnsureLockedCross(button)
         if (not button.virtualEmpty) and self.lockSlotsMode and IsSlotUserLocked(info.bagID, info.slot) then
             lockCross:Show()
@@ -3587,8 +3646,13 @@ function OneBag:Refresh(layoutOnly)
             lockCross.d2:Hide()
         end
         SetNewItemGlowShown(button, (not button.virtualEmpty) and IsSlotNewItem(info.bagID, info.slot, info.item))
+        UpdateButtonStyleBorderForItem(button, info.item)
+        button._lunaBagsSortingDesaturated = self.sortingActive == true
         if button.icon and button.icon.SetDesaturated then
             button.icon:SetDesaturated(self.sortingActive == true)
+        end
+        if ns.Plugins and not button.virtualEmpty then
+            ns.Plugins:Apply(button, info, "oneBag")
         end
         button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and ((not readOnly) or usingReadonlyButtons))
         if button.LockOverlay then
@@ -3828,8 +3892,7 @@ function OneBag:SaveVisibleBagsState()
     if not cfg then
         return
     end
-    local perChar = cfg._activeCharacterData or {}
-    perChar.visibleBags = CopyVisibleBagsState(self.visibleBags)
+    cfg.visibleBags = CopyVisibleBagsState(self.visibleBags)
 end
 
 function OneBag:ApplySettings()
@@ -3848,10 +3911,9 @@ function OneBag:ApplySettings()
     self.windowWidth = math.max(240, math.min(1200, tonumber(cfg.windowWidth) or fallbackWidth))
     self.maxHeight = math.max(220, math.min(1200, tonumber(cfg.windowMaxHeight) or BAG_DEFAULT_MAX_HEIGHT))
     self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
-    local perChar = cfg._activeCharacterData or {}
-    self.splitByBagRows = (perChar.splitByBagRows ~= nil) and (perChar.splitByBagRows == true) or (cfg.splitByBagRows == true)
-    self.showBagRail = (perChar.showBagRail ~= nil) and (perChar.showBagRail == true) or (cfg.showBagRail ~= false)
-    self.visibleBags = CopyVisibleBagsState(perChar.visibleBags or cfg.visibleBags)
+    self.splitByBagRows = cfg.splitByBagRows == true
+    self.showBagRail = cfg.showBagRail ~= false
+    self.visibleBags = CopyVisibleBagsState(cfg.visibleBags)
 
     if self.frame then
         self.frame:ClearAllPoints()
@@ -3911,8 +3973,7 @@ function OneBag:Show()
         return
     end
     self:CreateFrame()
-    self.viewCharacterKey = nil
-    self:InvalidateSlotCache()
+    self:SetViewCharacterKey(nil)
     self:ApplySettings()
     EnsureStackSplitFrameAboveBags()
     self.frame:Show()

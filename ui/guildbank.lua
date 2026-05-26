@@ -38,6 +38,8 @@ local MODE_BUTTONS = {
     { key = "moneylog", label = GUILD_BANK_MONEY_LOG or "Money Log", icon = "Interface\\Icons\\INV_Misc_Coin_01" },
 }
 local LOG_TYPES = {
+    deposit = GUILDBANK_DEPOSIT_MONEY_FORMAT,
+    withdraw = GUILDBANK_WITHDRAW_MONEY_FORMAT,
     buyTab = GUILDBANK_BUYTAB_MONEY_FORMAT,
     repair = GUILDBANK_REPAIR_MONEY_FORMAT,
     withdrawForTab = GUILDBANK_WITHDRAWFORTAB_MONEY_FORMAT,
@@ -180,6 +182,70 @@ end
 
 local RefreshGuildBankActionButtons
 local CreateEditorInput
+local popupHooksInstalled = false
+
+local function RegisterSpecialFrame(frame)
+    if not UISpecialFrames or not frame or not frame.GetName then
+        return
+    end
+    local frameName = frame:GetName()
+    if not frameName then
+        return
+    end
+    for _, name in ipairs(UISpecialFrames) do
+        if name == frameName then
+            return
+        end
+    end
+    table.insert(UISpecialFrames, frameName)
+end
+
+local function RefreshGuildBankTabInfoSoon()
+    local tab = GetCurrentTab and GetCurrentTab() or nil
+    if tab and QueryGuildBankTab then
+        QueryGuildBankTab(tab)
+    end
+    if tab and QueryGuildBankText then
+        QueryGuildBankText(tab)
+    end
+    if OneGuildBank.RefreshTabs then
+        OneGuildBank:RefreshTabs()
+    end
+    if OneGuildBank.InvalidateSlotCache then
+        OneGuildBank:InvalidateSlotCache()
+    end
+    if OneGuildBank.RefreshIfShown then
+        OneGuildBank:RefreshIfShown()
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.2, function()
+            if OneGuildBank.RefreshTabs then
+                OneGuildBank:RefreshTabs()
+            end
+            if OneGuildBank.RefreshIfShown then
+                OneGuildBank:RefreshIfShown()
+            end
+        end)
+    end
+end
+
+local function EnsureGuildBankPopupHooks()
+    if popupHooksInstalled then
+        return
+    end
+    popupHooksInstalled = true
+    if hooksecurefunc then
+        if GuildBankPopupFrame and GuildBankPopupFrame.ConfirmEdit then
+            hooksecurefunc(GuildBankPopupFrame, "ConfirmEdit", RefreshGuildBankTabInfoSoon)
+        end
+        if SetGuildBankTabInfo then
+            hooksecurefunc("SetGuildBankTabInfo", RefreshGuildBankTabInfoSoon)
+        end
+        if SetGuildBankText then
+            hooksecurefunc("SetGuildBankText", RefreshGuildBankTabInfoSoon)
+        end
+    end
+end
 
 local function MoneyToString(copper)
     if GetMoneyString then
@@ -288,6 +354,9 @@ local function CreateGuildBankMoneyDialog()
     dialog:SetSize(260, 126)
     dialog:SetFrameStrata("DIALOG")
     dialog:SetFrameLevel(90)
+    if dialog.SetToplevel then
+        dialog:SetToplevel(true)
+    end
     dialog:SetClampedToScreen(true)
     dialog:EnableMouse(true)
     dialog:Hide()
@@ -372,6 +441,11 @@ local function ShowGuildBankMoneyPopup(kind)
     else
         dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
+    dialog:SetFrameStrata("TOOLTIP")
+    dialog:SetFrameLevel(100)
+    if dialog.Raise then
+        dialog:Raise()
+    end
     dialog:Show()
     if dialog.MoneyInput then
         local goldBox = _G[dialog.MoneyInput:GetName() .. "Gold"]
@@ -427,8 +501,22 @@ local function SelectTab(tab)
     if SetCurrentGuildBankTab then
         SetCurrentGuildBankTab(tab)
     end
-    OneGuildBank:QueryCurrentTab()
+    if OneGuildBank.mode == "log" and QueryGuildBankLog then
+        if QueryGuildBankTab then
+            QueryGuildBankTab(tab)
+        end
+        QueryGuildBankLog(tab)
+    elseif OneGuildBank.mode == "moneylog" and QueryGuildBankLog then
+        QueryGuildBankLog(MAX_GUILDBANK_TABS and (MAX_GUILDBANK_TABS + 1) or 9)
+    elseif OneGuildBank.mode == "info" and QueryGuildBankText then
+        QueryGuildBankText(tab)
+    else
+        OneGuildBank:QueryCurrentTab()
+    end
     OneGuildBank:RefreshDeferred()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.25, function() OneGuildBank:RefreshIfShown() end)
+    end
 end
 
 local function GetItemDetails(itemLink, includeFullDetails)
@@ -474,13 +562,14 @@ local function ItemMatchesSearch(item, searchText)
         return false
     end
     local needle = searchText:lower()
-    local fields = { item.name, item.itemLink, item.itemTypeName, item.subTypeName }
-    for _, value in ipairs(fields) do
-        if value and tostring(value):lower():find(needle, 1, true) then
-            return true
-        end
+    local name = item.name or (item.itemLink and GetItemInfo and GetItemInfo(item.itemLink))
+    if name and name:lower():find(needle, 1, true) then
+        return true
     end
-    return false
+    if item.itemLink and item.itemLink:lower():find(needle, 1, true) then
+        return true
+    end
+    return item.itemID and tostring(item.itemID):find(needle, 1, true) or false
 end
 
 local function ApplyButtonStyle(button)
@@ -626,17 +715,15 @@ local function SaveCurrentGuildBankTabInfo()
     end
     local tab = GetCurrentTab()
     local name = strtrim(editor.NameEdit:GetText() or "")
-    local iconText = strtrim(editor.IconEdit:GetText() or "")
     local note = editor.NoteEdit:GetText() or ""
     local currentIcon = nil
     if GetGuildBankTabInfo then
         local _
         _, currentIcon = GetGuildBankTabInfo(tab)
     end
-    local icon = iconText ~= "" and (tonumber(iconText) or iconText) or currentIcon
 
     if SetGuildBankTabInfo and name ~= "" then
-        SetGuildBankTabInfo(tab, name, icon)
+        SetGuildBankTabInfo(tab, name, currentIcon)
     end
     if SetGuildBankText then
         SetGuildBankText(tab, note)
@@ -644,8 +731,7 @@ local function SaveCurrentGuildBankTabInfo()
     if QueryGuildBankText then
         QueryGuildBankText(tab)
     end
-    OneGuildBank:RefreshTabs()
-    OneGuildBank:RefreshIfShown()
+    RefreshGuildBankTabInfoSoon()
 end
 
 local function UpdateButtonStyleBorder(button, item)
@@ -703,6 +789,9 @@ end
 local function ShowGuildBankTooltip(button)
     local tab = button.guildBankTab or GetCurrentTab()
     local slot = button.guildBankSlot or button:GetID()
+    if SetCurrentGuildBankTab then
+        SetCurrentGuildBankTab(tab)
+    end
     if GameTooltip and GameTooltip.SetGuildBankItem then
         GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
         GameTooltip:SetGuildBankItem(tab, slot)
@@ -749,7 +838,11 @@ local function SplitGuildBankStack(button)
     end
     button.SplitStack = function(splitButton, amount)
         if amount and amount > 0 and SplitGuildBankItem then
-            SplitGuildBankItem(GetCurrentTab(), splitButton.guildBankSlot or splitButton:GetID(), amount)
+            local tab = splitButton.guildBankTab or GetCurrentTab()
+            if SetCurrentGuildBankTab then
+                SetCurrentGuildBankTab(tab)
+            end
+            SplitGuildBankItem(tab, splitButton.guildBankSlot or splitButton:GetID(), amount)
         end
     end
     if OpenStackSplitFrame then
@@ -766,7 +859,11 @@ local function PickupGuildBankSlot(button)
     if not PickupGuildBankItem then
         return
     end
-    PickupGuildBankItem(button.guildBankTab or GetCurrentTab(), button.guildBankSlot or button:GetID())
+    local tab = button.guildBankTab or GetCurrentTab()
+    if SetCurrentGuildBankTab then
+        SetCurrentGuildBankTab(tab)
+    end
+    PickupGuildBankItem(tab, button.guildBankSlot or button:GetID())
 end
 
 local function FormatRecentTime(year, month, day, hour)
@@ -836,9 +933,6 @@ local function SetDetailContent(panel, mode, text)
             if not panel.InfoEditor.NameEdit:HasFocus() then
                 panel.InfoEditor.NameEdit:SetText(name or "")
             end
-            if not panel.InfoEditor.IconEdit:HasFocus() then
-                panel.InfoEditor.IconEdit:SetText(icon and tostring(icon) or "")
-            end
             if not panel.InfoEditor.NoteEdit:HasFocus() then
                 panel.InfoEditor.NoteEdit:SetText(note or "")
             end
@@ -872,7 +966,11 @@ local function GuildBankItemOnClick(button, mouseButton)
         if DropCursorMoney then DropCursorMoney() end
         if ClearCursor then ClearCursor() end
     elseif mouseButton == "RightButton" and item and AutoStoreGuildBankItem then
-        AutoStoreGuildBankItem(button.guildBankTab or GetCurrentTab(), button.guildBankSlot or button:GetID())
+        local tab = button.guildBankTab or GetCurrentTab()
+        if SetCurrentGuildBankTab then
+            SetCurrentGuildBankTab(tab)
+        end
+        AutoStoreGuildBankItem(tab, button.guildBankSlot or button:GetID())
     elseif item or cursorType then
         PickupGuildBankSlot(button)
     end
@@ -921,7 +1019,30 @@ local function PositionPopupNearFrame()
     if GuildBankPopupFrame and OneGuildBank.frame then
         GuildBankPopupFrame:ClearAllPoints()
         GuildBankPopupFrame:SetPoint("TOPLEFT", OneGuildBank.frame, "TOPRIGHT", -4, -30)
+        GuildBankPopupFrame:SetFrameStrata("DIALOG")
+        GuildBankPopupFrame:SetFrameLevel(FRAME_LEVEL + 80)
+        if GuildBankPopupFrame.SetToplevel then
+            GuildBankPopupFrame:SetToplevel(true)
+        end
     end
+end
+
+local function ShowGuildBankTabPopup(tab)
+    EnsureGuildBankUILoaded()
+    EnsureGuildBankPopupHooks()
+    if not GuildBankPopupFrame or not CanEditGuildBankTabInfo or not CanEditGuildBankTabInfo(tab) then
+        return false
+    end
+    if SetCurrentGuildBankTab then
+        SetCurrentGuildBankTab(tab)
+    end
+    OneGuildBank.selectedTab = tab
+    GuildBankPopupFrame:Show()
+    if GuildBankPopupFrame.Update then
+        GuildBankPopupFrame:Update()
+    end
+    PositionPopupNearFrame()
+    return true
 end
 
 local function CanShowBuyGuildBankTab()
@@ -956,6 +1077,7 @@ function OneGuildBank:CreateFrame()
 
     EnsureGuildBankUILoaded()
     EnsureGuildBankMoneyHooks()
+    EnsureGuildBankPopupHooks()
 
     local frame = _G.LunaBagsOneGuildBankFrame
     if not frame then
@@ -972,6 +1094,7 @@ function OneGuildBank:CreateFrame()
     end
 
     ApplyGuildBankFrameLayering(frame)
+    RegisterSpecialFrame(frame)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function()
         if not GetConfig().locked then
@@ -985,6 +1108,17 @@ function OneGuildBank:CreateFrame()
     frame:SetScript("OnHide", function()
         if frame.SearchBox then
             frame.SearchBox:ClearFocus()
+        end
+        if OneGuildBank.moneyDialog then
+            OneGuildBank.moneyDialog:Hide()
+        end
+        if GuildBankPopupFrame then
+            GuildBankPopupFrame:Hide()
+        end
+        if not OneGuildBank._closingGuildBankFrame and CloseGuildBankFrame then
+            OneGuildBank._closingGuildBankFrame = true
+            CloseGuildBankFrame()
+            OneGuildBank._closingGuildBankFrame = nil
         end
     end)
 
@@ -1043,12 +1177,7 @@ function OneGuildBank:CreateFrame()
         frame.CloseButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     end
     frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, 2)
-    frame.CloseButton:SetScript("OnClick", function()
-        if CloseGuildBankFrame then
-            CloseGuildBankFrame()
-        end
-        OneGuildBank:Hide()
-    end)
+    frame.CloseButton:SetScript("OnClick", LunaBagsOneGuildBank_Close)
 
     if not frame.TitleTextCustom then
         frame.TitleTextCustom = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1265,7 +1394,7 @@ function OneGuildBank:CreateFrame()
         frame.DetailPanel.InfoEditor.NameLabel:SetPoint("TOPLEFT", frame.DetailPanel.InfoEditor, "TOPLEFT", 0, 0)
         frame.DetailPanel.InfoEditor.NameEdit = CreateEditorInput(frame.DetailPanel.InfoEditor, "LunaBagsGuildBankTabNameEdit", false)
         frame.DetailPanel.InfoEditor.NameEdit:SetPoint("TOPLEFT", frame.DetailPanel.InfoEditor.NameLabel, "BOTTOMLEFT", 0, -4)
-        frame.DetailPanel.InfoEditor.NameEdit:SetPoint("RIGHT", frame.DetailPanel.InfoEditor, "RIGHT", -112, 0)
+        frame.DetailPanel.InfoEditor.NameEdit:SetPoint("RIGHT", frame.DetailPanel.InfoEditor, "RIGHT", 0, 0)
         frame.DetailPanel.InfoEditor.NameEdit:SetHeight(22)
 
         frame.DetailPanel.InfoEditor.IconLabel = CreateLabel(frame.DetailPanel.InfoEditor, EMBLEM_SYMBOL or "Icon")
@@ -1275,6 +1404,8 @@ function OneGuildBank:CreateFrame()
         frame.DetailPanel.InfoEditor.IconEdit:SetPoint("TOPLEFT", frame.DetailPanel.InfoEditor.IconLabel, "BOTTOMLEFT", 0, -4)
         frame.DetailPanel.InfoEditor.IconEdit:SetPoint("RIGHT", frame.DetailPanel.InfoEditor, "RIGHT", 0, 0)
         frame.DetailPanel.InfoEditor.IconEdit:SetHeight(22)
+        frame.DetailPanel.InfoEditor.IconLabel:Hide()
+        frame.DetailPanel.InfoEditor.IconEdit:Hide()
 
         frame.DetailPanel.InfoEditor.NoteLabel = CreateLabel(frame.DetailPanel.InfoEditor, GUILD_BANK_TAB_INFO or INFO or "Info")
         frame.DetailPanel.InfoEditor.NoteLabel:SetPoint("TOPLEFT", frame.DetailPanel.InfoEditor.NameEdit, "BOTTOMLEFT", 0, -12)
@@ -1302,9 +1433,14 @@ function OneGuildBank:AcquireTabButton(index)
         return button
     end
     button = CreateFrame("Button", nil, self.frame.TopRail, "BackdropTemplate")
-    SetRailButtonScripts(button, function(btn)
+    button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    SetRailButtonScripts(button, function(btn, mouseButton)
         if btn.canPurchase then
             ConfirmBuyGuildBankTab()
+            return
+        end
+        if mouseButton == "RightButton" and btn.tab and ShowGuildBankTabPopup(btn.tab) then
+            OneGuildBank:RefreshTabs()
             return
         end
         if btn.viewable ~= false then
@@ -1352,7 +1488,17 @@ function OneGuildBank:AcquireModeButton(index)
     button = CreateFrame("Button", nil, self.frame.BottomRail, "BackdropTemplate")
     SetRailButtonScripts(button, function(btn)
         OneGuildBank.mode = btn.modeKey or "bank"
+        if OneGuildBank.mode == "log" and QueryGuildBankLog then
+            QueryGuildBankLog(GetCurrentTab())
+        elseif OneGuildBank.mode == "moneylog" and QueryGuildBankLog then
+            QueryGuildBankLog(MAX_GUILDBANK_TABS and (MAX_GUILDBANK_TABS + 1) or 9)
+        elseif OneGuildBank.mode == "info" and QueryGuildBankText then
+            QueryGuildBankText(GetCurrentTab())
+        end
         OneGuildBank:RefreshDeferred()
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0.25, function() OneGuildBank:RefreshIfShown() end)
+        end
     end)
     self.modeButtons[index] = button
     return button
@@ -1414,7 +1560,7 @@ function OneGuildBank:BuildDetailText()
                 lines[#lines + 1] = msg .. FormatLogSuffix(year, month, day, hour)
             end
         end
-        return #lines > 0 and table.concat(lines, "\n") or (GUILD_BANK_LOG_TIME_PREPEND or "No log entries.")
+        return #lines > 0 and table.concat(lines, "\n") or (GUILD_BANK_LOG or "No log entries.")
     elseif self.mode == "moneylog" then
         if QueryGuildBankLog then
             QueryGuildBankLog(MAX_GUILDBANK_TABS and (MAX_GUILDBANK_TABS + 1) or 9)
@@ -1432,6 +1578,8 @@ function OneGuildBank:BuildDetailText()
                     msg = string.format(GUILDBANK_BUYTAB_MONEY_FORMAT, displayName, money)
                 elseif transactionType == "buyTab" and GUILDBANK_UNLOCKTAB_FORMAT then
                     msg = string.format(GUILDBANK_UNLOCKTAB_FORMAT, displayName)
+                elseif transactionType == "depositSummary" and GUILDBANK_AWARD_MONEY_SUMMARY_FORMAT then
+                    msg = string.format(GUILDBANK_AWARD_MONEY_SUMMARY_FORMAT, money)
                 elseif formatString then
                     msg = string.format(formatString, displayName, money)
                 else
@@ -1666,9 +1814,7 @@ function OneGuildBank:Refresh()
 
     for _, info in ipairs(slots) do
         local matches = ItemMatchesSearch(info.item, self.searchText)
-        if not searching or matches or info.item then
-            visibleSlots[#visibleSlots + 1] = info
-        end
+        visibleSlots[#visibleSlots + 1] = info
         info.matchesSearch = matches
     end
 
@@ -1713,7 +1859,7 @@ function OneGuildBank:Refresh()
         button:ClearAllPoints()
         button:SetPoint("TOPLEFT", self.frame.Content, "TOPLEFT", gridInsetX + col * (size + spacing), -row * (size + spacing))
         local defaultColumn, defaultRow = GetDefaultSlotIDs(info.slot)
-        button:SetID(defaultRow)
+        button:SetID(info.slot)
         button.defaultGuildBankColumn = defaultColumn
         button.defaultGuildBankRow = defaultRow
         button.guildBankTab = info.tab
@@ -1721,7 +1867,14 @@ function OneGuildBank:Refresh()
         button.tab = info.tab
         button.slot = info.slot
         button.itemData = info.item
-        button:SetAlpha((searching and not info.matchesSearch) and 0.24 or 1)
+        local alpha
+        if info.item then
+            alpha = (searching and not info.matchesSearch) and 0.22 or 1
+        else
+            alpha = searching and 0.18 or 0.55
+        end
+        button:SetAlpha(alpha)
+        button._baseAlpha = alpha
         SetButtonItem(button, info.item, info.locked)
         ResetButtonVisualState(button, info.item ~= nil)
         if button.DebugSlotText and IsDebugEnabled() then
@@ -1830,6 +1983,17 @@ end
 function OneGuildBank:Hide()
     if self.frame then
         self.frame:Hide()
+    end
+end
+
+function LunaBagsOneGuildBank_Close()
+    if CloseGuildBankFrame then
+        OneGuildBank._closingGuildBankFrame = true
+        CloseGuildBankFrame()
+        OneGuildBank._closingGuildBankFrame = nil
+    end
+    if ns.OneGuildBank then
+        ns.OneGuildBank:Hide()
     end
 end
 

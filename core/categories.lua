@@ -1,8 +1,8 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local Categories = {
-    customMatchers = {},
-}
+local Categories = LunaBags and LunaBags:CreateModule("categories") or {}
+Categories.customMatchers = Categories.customMatchers or {}
 
 ns.Categories = Categories
 
@@ -394,8 +394,43 @@ function Categories:AddBlacklistItemID(category, itemID)
     return true
 end
 
+function Categories:RemoveBlacklistItemID(category, itemID)
+    if type(category) ~= "table" or type(category.rules) ~= "table" then
+        return false
+    end
+    itemID = tonumber(itemID)
+    if not itemID then
+        return false
+    end
+
+    local changed = false
+    local remaining = {}
+    for _, token in ipairs(SplitCSV(category.rules.blacklistItemIDs)) do
+        if tonumber(token) == itemID then
+            changed = true
+        else
+            remaining[#remaining + 1] = token
+        end
+    end
+
+    if changed then
+        category.rules.blacklistItemIDs = (#remaining > 0) and table.concat(remaining, ",") or nil
+    end
+    return changed
+end
+
 local function MatchEquipmentSet(item)
     if not item or not item.itemID then return false end
+
+    local itemID = tonumber(item.itemID)
+    if not itemID then return false end
+
+    local now = GetTime and GetTime() or 0
+    if Categories._equipmentSetItemCache and (now == 0 or not Categories._equipmentSetItemCacheAt or (now - Categories._equipmentSetItemCacheAt) < 2) then
+        return Categories._equipmentSetItemCache[itemID] == true
+    end
+
+    local cache = {}
 
     if C_EquipmentSet and C_EquipmentSet.GetEquipmentSetIDs and C_EquipmentSet.GetItemIDs then
         local setIDs = C_EquipmentSet.GetEquipmentSetIDs() or {}
@@ -403,8 +438,9 @@ local function MatchEquipmentSet(item)
             local itemIDs = C_EquipmentSet.GetItemIDs(setID)
             if type(itemIDs) == "table" then
                 for _, id in pairs(itemIDs) do
-                    if tonumber(id) == tonumber(item.itemID) then
-                        return true
+                    id = tonumber(id)
+                    if id then
+                        cache[id] = true
                     end
                 end
             end
@@ -415,8 +451,9 @@ local function MatchEquipmentSet(item)
         for _, set in pairs(ItemRackUser.Sets) do
             if type(set) == "table" then
                 for _, id in pairs(set) do
-                    if tonumber(id) == tonumber(item.itemID) then
-                        return true
+                    id = tonumber(id)
+                    if id then
+                        cache[id] = true
                     end
                 end
             end
@@ -428,14 +465,18 @@ local function MatchEquipmentSet(item)
         if ok and type(items) == "table" then
             for _, outfitterItem in pairs(items) do
                 local id = type(outfitterItem) == "table" and outfitterItem.Code or outfitterItem
-                if tonumber(id) == tonumber(item.itemID) then
-                    return true
+                id = tonumber(id)
+                if id then
+                    cache[id] = true
                 end
             end
         end
     end
 
-    return false
+    Categories._equipmentSetItemCache = cache
+    Categories._equipmentSetItemCacheAt = now
+
+    return cache[itemID] == true
 end
 
 function Categories:IsEquipmentSetItem(item)
@@ -492,6 +533,25 @@ function Categories:ItemMatches(category, item)
     end
 
     return hasRule
+end
+
+function Categories:ItemMatchesNonItemIDRules(category, item)
+    if type(category) ~= "table" then
+        return false
+    end
+    local rules = category.rules
+    if type(rules) ~= "table" then
+        return false
+    end
+
+    local itemIDs = rules.itemIDs
+    local blacklistItemIDs = rules.blacklistItemIDs
+    rules.itemIDs = nil
+    rules.blacklistItemIDs = nil
+    local matched = self:ItemMatches(category, item)
+    rules.itemIDs = itemIDs
+    rules.blacklistItemIDs = blacklistItemIDs
+    return matched == true
 end
 
 function Categories:MatchItem(item, scope)

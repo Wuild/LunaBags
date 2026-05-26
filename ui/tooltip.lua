@@ -1,6 +1,7 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local Tooltip = {}
+local Tooltip = LunaBags and LunaBags:CreateModule("tooltip") or {}
 ns.Tooltip = Tooltip
 
 local function AddCharacterItemCountTooltip(tt, itemID)

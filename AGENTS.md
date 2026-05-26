@@ -5,14 +5,21 @@ This file is for coding agents working on this addon.
 ## Project shape
 
 - Addon: `LunaBags` (WoW Classic/Anniversary UI)
-- Entry + defaults: `Core/Core.lua`
-- Blizzard bag hook layer: `Core/BagHooks.lua`
-- Sorting engine: `Core/Sort.lua`
-- Plugin system: `Core/Plugins.lua`
-- Persistent bag cache per character: `Data/BagData.lua`
-- OneBag UI + runtime behavior: `UI/OneBag.lua` (+ `UI/OneBag.xml`)
-- OneBank UI: `UI/OneBank.lua` (+ `UI/OneBank.xml`)
-- Options UI (AceConfig): `Config/Options.lua`
+- Entry + defaults: `LunaBags.lua`
+- Addon file loader: `LunaBags.xml`
+- Defaults: `core/configs.lua`
+- Shared addon helpers: `core/methods.lua`
+- Blizzard frame integration: `core/blizzard.lua`
+- Slash commands: `core/commands.lua`
+- Runtime event handlers: `core/events.lua`
+- Blizzard bag hook layer: `core/hooks.lua`
+- Sorting engine: `core/sort.lua`
+- Plugin system: `core/plugins.lua`
+- Built-in plugins: `plugins/*.lua`
+- Persistent bag cache per character: `data/bags.lua`
+- OneBag UI + runtime behavior: `ui/onebag.lua` (+ `ui/onebag.xml`)
+- OneBank UI: `ui/onebank.lua` (+ `ui/onebank.xml`)
+- Options UI (AceConfig): `core/settings.lua`
 
 ## Data model
 
@@ -47,7 +54,7 @@ This file is for coding agents working on this addon.
 
 5. Character view mode is read-only.
    - If viewing non-current character, disable moving/using/splitting.
-   - Render from `Data/BagData` cache only.
+   - Render from `data/bags.lua` cache only.
 
 ## APIs/patterns to avoid
 
@@ -60,7 +67,7 @@ This file is for coding agents working on this addon.
 
 ## UI layout notes
 
-- OneBag layout is data-driven from `UI/OneBag.lua`.
+- OneBag layout is data-driven from `ui/onebag.lua`.
 - Window height must be derived from final positioned slot geometry
   (not rough row estimates), because split sections add extra offsets.
 - Keyring is currently rendered as a split section in the main window flow.
@@ -88,4 +95,3 @@ appear to “override” current behavior.
 7. Tooltip:
    - item count per character + bank lines appear reliably
    - money bar tooltip shows total + per character.
-

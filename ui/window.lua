@@ -1,6 +1,7 @@
 local _, ns = ...
+local LunaBags = ns.LunaBags
 
-local WindowChrome = {}
+local WindowChrome = LunaBags and LunaBags:CreateModule("windowChrome") or {}
 ns.WindowChrome = WindowChrome
 
 local function Clamp01(value, fallback)
@@ -196,4 +197,3 @@ function WindowChrome.EnsureStatusBar(frame, key)
     bar.Text:SetTextColor(1, 1, 1, 1)
     return bar
 end
-

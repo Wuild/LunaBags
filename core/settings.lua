@@ -5,9 +5,17 @@ local BuildSortingOptions
 local RefreshCategoryOptions
 local RefreshProfileOptions
 local profileCallbacksRegistered = false
+local profileImportText = ""
+local profileImportName = ""
+local profileExportText = ""
 
 local function RefreshOneBag(deferred)
     if ns.OneBag then
+        if ns.OneBag.InvalidateSlotCache then
+            ns.OneBag:InvalidateSlotCache()
+        else
+            ns.OneBag._layoutModel = nil
+        end
         ns.OneBag:ApplySettings()
         if ns.OneBag.frame and ns.OneBag.frame:IsShown() then
             ns.OneBag:Refresh()
@@ -24,6 +32,11 @@ local function RefreshOneBag(deferred)
 end
 local function RefreshOneBank()
     if ns.OneBank then
+        if ns.OneBank.InvalidateSlotCache then
+            ns.OneBank:InvalidateSlotCache()
+        else
+            ns.OneBank._layoutModel = nil
+        end
         ns.OneBank:ApplySettings()
         if ns.OneBank.frame and ns.OneBank.frame:IsShown() then
             ns.OneBank:Refresh()
@@ -549,11 +562,24 @@ local function RefreshCategories()
 end
 
 local function RefreshAllOpenWindows()
-    RefreshOneBag(true)
-    RefreshOneBank()
+    if LunaBags.RefreshOpenWindowsForProfileChange then
+        LunaBags:RefreshOpenWindowsForProfileChange()
+    else
+        RefreshOneBag(true)
+        RefreshOneBank()
+    end
 end
 
 local function HandleProfileChanged()
+    if LunaBags.EnsureProfileShape then
+        LunaBags:EnsureProfileShape()
+    end
+    if LunaBags.MigrateDefaultSortRules then
+        LunaBags:MigrateDefaultSortRules()
+    end
+    if LunaBags.ApplyWindowModuleStates then
+        LunaBags:ApplyWindowModuleStates()
+    end
     RefreshSortingOptions()
     if RefreshCategoryOptions then
         RefreshCategoryOptions()
@@ -1543,9 +1569,93 @@ local function BuildProfileOptions()
             },
         }
     end
-    local profileOptions = aceDBOptions:GetOptionsTable(LunaBags.db)
+    local profileOptions = aceDBOptions:GetOptionsTable(LunaBags.db, true)
     profileOptions.name = "Profiles"
     profileOptions.order = 6
+    profileOptions.args = profileOptions.args or {}
+    profileOptions.args.export = {
+        type = "group",
+        name = "Export",
+        order = 900,
+        args = {
+            overview = {
+                type = "description",
+                name = "Export the current profile as a base64 encoded LunaBags profile string.",
+                order = 0,
+                fontSize = "medium",
+            },
+            exportProfile = {
+                type = "execute",
+                name = "Export Current Profile",
+                order = 1,
+                func = function()
+                    profileExportText = (LunaBags.ExportCurrentProfile and LunaBags:ExportCurrentProfile()) or ""
+                    if profileExportText == "" and LunaBags.Print then
+                        LunaBags:Print("Profile export failed.")
+                    end
+                end,
+            },
+            exportData = {
+                type = "input",
+                name = "Export Data",
+                order = 2,
+                multiline = 8,
+                width = "full",
+                get = function() return profileExportText end,
+                set = function(_, value) profileExportText = value or "" end,
+            },
+        },
+    }
+    profileOptions.args.import = {
+        type = "group",
+        name = "Import",
+        order = 901,
+        args = {
+            overview = {
+                type = "description",
+                name = "Import a base64 encoded LunaBags profile string.",
+                order = 0,
+                fontSize = "medium",
+            },
+            importName = {
+                type = "input",
+                name = "Import As",
+                desc = "Leave blank to use the exported profile name or replace the current profile.",
+                order = 1,
+                get = function() return profileImportName end,
+                set = function(_, value) profileImportName = value or "" end,
+            },
+            importData = {
+                type = "input",
+                name = "Import Data",
+                order = 2,
+                multiline = 8,
+                width = "full",
+                get = function() return profileImportText end,
+                set = function(_, value) profileImportText = value or "" end,
+            },
+            importProfile = {
+                type = "execute",
+                name = "Import Profile",
+                order = 3,
+                confirm = true,
+                disabled = function() return profileImportText == "" end,
+                func = function()
+                    local ok, result = LunaBags.ImportProfile and LunaBags:ImportProfile(profileImportText, profileImportName)
+                    if ok then
+                        profileImportText = ""
+                        profileImportName = ""
+                        HandleProfileChanged()
+                        if LunaBags.Print then
+                            LunaBags:Print(("Imported profile: %s"):format(tostring(result)))
+                        end
+                    elseif LunaBags.Print then
+                        LunaBags:Print(tostring(result or "Profile import failed."))
+                    end
+                end,
+            },
+        },
+    }
     return profileOptions
 end
 

@@ -1,12 +1,11 @@
 local _, ns = ...
 local LunaBags = ns.LunaBags
 
-local BagHooks = {
-    isOpen = false,
-    isHooked = false,
-    blizzardDisabled = false,
-    toggleLocked = false,
-}
+local BagHooks = LunaBags and LunaBags:CreateModule("bagHooks") or {}
+BagHooks.isOpen = false
+BagHooks.isHooked = false
+BagHooks.blizzardDisabled = false
+BagHooks.toggleLocked = false
 
 ns.BagHooks = BagHooks
 
