@@ -169,6 +169,40 @@ end
 local function SetPluginSetting(key, value)
     LunaBags.db.profile.plugins = LunaBags.db.profile.plugins or {}
     LunaBags.db.profile.plugins[key] = value
+    local plugin = ns.Plugins and ns.Plugins.registry and ns.Plugins.registry[key]
+    if type(plugin) == "table" then
+        plugin._categoryCache = nil
+    end
+    RefreshOneBag()
+    RefreshOneBank()
+    RefreshOneGuildBank()
+end
+
+local function GetPluginOption(plugin, optionKey, fallback)
+    LunaBags.db.profile.plugins = LunaBags.db.profile.plugins or {}
+    local id = plugin and plugin.id
+    if not id then
+        return fallback
+    end
+    local optionsKey = id .. "Options"
+    LunaBags.db.profile.plugins[optionsKey] = LunaBags.db.profile.plugins[optionsKey] or {}
+    local value = LunaBags.db.profile.plugins[optionsKey][optionKey]
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
+local function SetPluginOption(plugin, optionKey, value)
+    LunaBags.db.profile.plugins = LunaBags.db.profile.plugins or {}
+    local id = plugin and plugin.id
+    if not id then
+        return
+    end
+    local optionsKey = id .. "Options"
+    LunaBags.db.profile.plugins[optionsKey] = LunaBags.db.profile.plugins[optionsKey] or {}
+    LunaBags.db.profile.plugins[optionsKey][optionKey] = value
+    plugin._categoryCache = nil
     RefreshOneBag()
     RefreshOneBank()
     RefreshOneGuildBank()
@@ -310,6 +344,13 @@ local ITEM_CLASS_OPTIONS = {
     [12] = "Quest",
     [13] = "Key",
     [15] = "Miscellaneous",
+}
+
+local RAIL_POSITION_OPTIONS = {
+    top = "Top",
+    left = "Left",
+    right = "Right",
+    bottom = "Bottom",
 }
 
 local ITEM_SUBCLASS_OPTIONS = {
@@ -1191,6 +1232,19 @@ local function BuildBagOptions()
             get = function() return GetOneBagSetting("splitByBagRows", false) end,
             set = function(_, value) SetOneBagSetting("splitByBagRows", value) end,
         },
+        bagRailPosition = {
+            type = "select",
+            name = "Bag Rail Position",
+            order = 5.5,
+            values = {
+                top = "Top",
+                left = "Left",
+                right = "Right",
+                bottom = "Bottom",
+            },
+            get = function() return GetOneBagSetting("bagRailPosition", "top") end,
+            set = function(_, value) SetOneBagSetting("bagRailPosition", value) end,
+        },
         scale = {
             type = "range",
             name = "Frame Scale",
@@ -1276,6 +1330,14 @@ local function BuildBankOptions()
             get = function() return GetOneBankSetting("spacing", 4) end,
             set = function(_, value) SetOneBankSetting("spacing", value) end,
         },
+        bankBagRailPosition = {
+            type = "select",
+            name = "Bag Rail Position",
+            order = 4.5,
+            values = RAIL_POSITION_OPTIONS,
+            get = function() return GetOneBankSetting("bagRailPosition", "top") end,
+            set = function(_, value) SetOneBankSetting("bagRailPosition", value) end,
+        },
         bankScale = {
             type = "range",
             name = "Frame Scale",
@@ -1335,6 +1397,22 @@ local function BuildGuildBankOptions()
             step = 1,
             get = function() return GetOneGuildBankSetting("spacing", 4) end,
             set = function(_, value) SetOneGuildBankSetting("spacing", value) end,
+        },
+        guildBankTabRailPosition = {
+            type = "select",
+            name = "Tab Rail Position",
+            order = 3.5,
+            values = RAIL_POSITION_OPTIONS,
+            get = function() return GetOneGuildBankSetting("tabRailPosition", "top") end,
+            set = function(_, value) SetOneGuildBankSetting("tabRailPosition", value) end,
+        },
+        guildBankModeRailPosition = {
+            type = "select",
+            name = "Mode Rail Position",
+            order = 3.6,
+            values = RAIL_POSITION_OPTIONS,
+            get = function() return GetOneGuildBankSetting("modeRailPosition", "bottom") end,
+            set = function(_, value) SetOneGuildBankSetting("modeRailPosition", value) end,
         },
         guildBankScale = {
             type = "range",
@@ -1507,7 +1585,7 @@ function BuildSortingOptions()
 end
 
 local function BuildPluginOptions()
-    return {
+    local args = {
         overview = {
             type = "description",
             name = "Small item-slot overlays and borders. These update open windows immediately.",
@@ -1529,6 +1607,14 @@ local function BuildPluginOptions()
             get = function() return GetPluginSetting("equipmentSetBorder", true) end,
             set = function(_, value) SetPluginSetting("equipmentSetBorder", value) end,
         },
+        pluginEquipmentSetCategories = {
+            type = "toggle",
+            name = "Equipment Set Categories",
+            desc = "Create dynamic bag and bank categories for Blizzard, ExtraStats, and ItemRack equipment sets. Fully equipped sets are hidden.",
+            order = 1.6,
+            get = function() return GetPluginSetting("equipmentSetCategories", true) end,
+            set = function(_, value) SetPluginSetting("equipmentSetCategories", value) end,
+        },
         pluginTrashIcon = {
             type = "toggle",
             name = "Trash Item Icon",
@@ -1537,6 +1623,54 @@ local function BuildPluginOptions()
             set = function(_, value) SetPluginSetting("trashIcon", value) end,
         },
     }
+
+    local registry = ns.Plugins and ns.Plugins.registry
+    if type(registry) == "table" then
+        local ordered = {}
+        for id, plugin in pairs(registry) do
+            if type(plugin) == "table" then
+                ordered[#ordered + 1] = plugin
+            end
+        end
+        table.sort(ordered, function(a, b)
+            return tostring(a.name or a.id or "") < tostring(b.name or b.id or "")
+        end)
+        for index, plugin in ipairs(ordered) do
+            local fn = plugin.GetOptions or plugin.BuildOptions or plugin.getOptions
+            local pluginOptions
+            if type(fn) == "function" then
+                local ok, result = pcall(fn, plugin, {
+                    get = function(optionKey, fallback) return GetPluginOption(plugin, optionKey, fallback) end,
+                    set = function(optionKey, value) SetPluginOption(plugin, optionKey, value) end,
+                    getEnabled = function(fallback) return GetPluginSetting(plugin.id, fallback) end,
+                    setEnabled = function(value) SetPluginSetting(plugin.id, value) end,
+                })
+                if ok then
+                    pluginOptions = result
+                end
+            elseif type(plugin.options) == "table" then
+                pluginOptions = plugin.options
+            end
+
+            if type(pluginOptions) == "table" then
+                local key = "pluginPage_" .. tostring(plugin.id or plugin.name or index):gsub("[^%w_]", "_")
+                if pluginOptions.type == "group" then
+                    args[key] = pluginOptions
+                    args[key].name = args[key].name or plugin.name or plugin.id
+                    args[key].order = args[key].order or (20 + index)
+                else
+                    args[key] = {
+                        type = "group",
+                        name = plugin.name or plugin.id or ("Plugin " .. tostring(index)),
+                        order = 20 + index,
+                        args = pluginOptions,
+                    }
+                end
+            end
+        end
+    end
+
+    return args
 end
 
 local function BuildProfileOptions()
@@ -1719,6 +1853,7 @@ options = {
             type = "group",
             name = "Plugins",
             order = 5,
+            childGroups = "tree",
             args = BuildPluginOptions(),
         },
         profiles = BuildProfileOptions(),

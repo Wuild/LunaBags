@@ -12,6 +12,7 @@ OneBag.spacing = 4
 OneBag.searchText = ""
 OneBag.searchVisible = false
 OneBag.showBagRail = true
+OneBag.bagRailPosition = "top"
 OneBag.splitByBagRows = false
 OneBag.sortingActive = false
 OneBag.lockSlotsMode = false
@@ -2378,6 +2379,39 @@ function OneBag:RefreshBagSlots()
         railBags[#railBags + 1] = KEYRING_CONTAINER
     end
 
+    local candidateCount = #railBags
+    if KEYRING_CONTAINER and not self.keyringAvailable then
+        candidateCount = candidateCount - 1
+    end
+    local horizontalWidth = pad * 2 + candidateCount * size + math.max(0, candidateCount - 1) * spacing
+    local horizontalHeight = size + pad * 2
+    local verticalWidth = size + pad * 2
+    local frameLeft = self.frame:GetLeft() or 0
+    local frameRight = self.frame:GetRight() or (frameLeft + (self.frame:GetWidth() or 0))
+    local frameCenter = (frameLeft + frameRight) * 0.5
+    local chosenPosition = self.bagRailPosition or "top"
+    local verticalSide = "LEFT"
+
+    if chosenPosition ~= "left" and chosenPosition ~= "right" and chosenPosition ~= "bottom" then
+        chosenPosition = "top"
+    end
+
+    local useVertical = chosenPosition == "left" or chosenPosition == "right"
+    if useVertical then
+        verticalSide = chosenPosition == "right" and "RIGHT" or "LEFT"
+    end
+
+    self.frame.BagSlots:ClearAllPoints()
+    if useVertical and verticalSide == "RIGHT" then
+        self.frame.BagSlots:SetPoint("TOPLEFT", self.frame, "TOPRIGHT", 0, 0)
+    elseif useVertical then
+        self.frame.BagSlots:SetPoint("TOPRIGHT", self.frame, "TOPLEFT", 0, 0)
+    elseif chosenPosition == "bottom" then
+        self.frame.BagSlots:SetPoint("TOPLEFT", self.frame, "BOTTOMLEFT", 0, 0)
+    else
+        self.frame.BagSlots:SetPoint("BOTTOMLEFT", self.frame, "TOPLEFT", 0, 0)
+    end
+
     local shownCount = 0
     for i, bagID in ipairs(railBags) do
         local button = self:AcquireBagButton(i)
@@ -2388,7 +2422,11 @@ function OneBag:RefreshBagSlots()
         if showButton then
             shownCount = shownCount + 1
             button:ClearAllPoints()
-            button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad + (shownCount - 1) * (size + spacing), -pad)
+            if useVertical then
+                button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad, -pad - (shownCount - 1) * (size + spacing))
+            else
+                button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad + (shownCount - 1) * (size + spacing), -pad)
+            end
             button.bagID = bagID
             button.invSlot = ContainerIDToInventoryIDCompat(bagID)
 
@@ -2431,8 +2469,13 @@ function OneBag:RefreshBagSlots()
         self.frame.BagSlots:SetBackdropBorderColor(0.24, 0.24, 0.24, 0.95)
     end
     local used = shownCount
-    self.frame.BagSlots:SetWidth(pad * 2 + used * size + (used - 1) * spacing)
-    self.frame.BagSlots:SetHeight(size + pad * 2)
+    if useVertical then
+        self.frame.BagSlots:SetWidth(verticalWidth)
+        self.frame.BagSlots:SetHeight(pad * 2 + used * size + math.max(0, used - 1) * spacing)
+    else
+        self.frame.BagSlots:SetWidth(pad * 2 + used * size + math.max(0, used - 1) * spacing)
+        self.frame.BagSlots:SetHeight(horizontalHeight)
+    end
     ApplyWindowAppearance(self.frame, GetConfig())
 end
 
@@ -3043,9 +3086,6 @@ function OneBag:Refresh(layoutOnly)
     if not occupiedSlots or not totalSlots then
         occupiedSlots, totalSlots = CountSlotUsage(allSlots)
     end
-    if not layoutOnly then
-        self:RefreshBagSlots()
-    end
     local searching = self.searchText and self.searchText ~= ""
     local readOnly = not IsViewingCurrentCharacter()
     local used = #allSlots
@@ -3079,14 +3119,14 @@ function OneBag:Refresh(layoutOnly)
     local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
     local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
-    local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
+    local categoriesEnabled = ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") or false
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
     local visualSortEnabled = IsVisualSortEnabled()
 
     if (not cachedLayout) and categoriesEnabled and ns.Categories then
-        for index, category in ipairs(ns.Categories:GetList("bags") or {}) do
-            if category.enabled ~= false then
+        for index, category in ipairs(ns.Categories:GetActiveList("bags") or {}) do
+            if category.enabled ~= false and category.hidden ~= true then
                 local key = category.id or category.name or tostring(index)
                 local section = {
                     title = category.name or ("Category " .. tostring(index)),
@@ -3452,6 +3492,9 @@ function OneBag:Refresh(layoutOnly)
     local naturalFrameHeight = contentHeight + frameVerticalChrome
     frameHeight = math.max(200, math.min(tonumber(self.maxHeight) or BAG_DEFAULT_MAX_HEIGHT, naturalFrameHeight))
     self.frame:SetSize(frameWidth, frameHeight)
+    if not layoutOnly then
+        self:RefreshBagSlots()
+    end
     self:UpdateScrollFrame(contentHeight, math.max(1, frameHeight - frameVerticalChrome))
 
     self.sectionHeaders = self.sectionHeaders or {}
@@ -3913,6 +3956,9 @@ function OneBag:ApplySettings()
     self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
     self.splitByBagRows = cfg.splitByBagRows == true
     self.showBagRail = cfg.showBagRail ~= false
+    self.bagRailPosition = (cfg.bagRailPosition == "top" or cfg.bagRailPosition == "left" or cfg.bagRailPosition == "right" or cfg.bagRailPosition == "bottom")
+        and cfg.bagRailPosition
+        or "top"
     self.visibleBags = CopyVisibleBagsState(cfg.visibleBags)
 
     if self.frame then

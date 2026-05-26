@@ -10,6 +10,7 @@ OneBank.spacing = 4
 OneBank.searchText = ""
 OneBank.searchVisible = false
 OneBank.showBagRail = true
+OneBank.bagRailPosition = "top"
 OneBank.visibleBags = {}
 OneBank.sortingActive = false
 OneBank.viewMode = false
@@ -47,6 +48,26 @@ local function CalculateColumnsFromWindowWidth(windowWidth, slotSize, spacing)
     spacing = tonumber(spacing) or 4
     local gridSpace = math.max(slotSize, windowWidth - BANK_FRAME_PADDING_X - (spacing * 2))
     return math.max(1, math.floor((gridSpace + spacing) / (slotSize + spacing)))
+end
+
+local function NormalizeRailPosition(position, fallback)
+    if position == "top" or position == "left" or position == "right" or position == "bottom" then
+        return position
+    end
+    return fallback or "top"
+end
+
+local function PositionBankRail(frame, rail, position)
+    rail:ClearAllPoints()
+    if position == "left" then
+        rail:SetPoint("TOPRIGHT", frame, "TOPLEFT", 0, 0)
+    elseif position == "right" then
+        rail:SetPoint("TOPLEFT", frame, "TOPRIGHT", 0, 0)
+    elseif position == "bottom" then
+        rail:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, 0)
+    else
+        rail:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 0)
+    end
 end
 
 local function EnsureStackSplitFrameAboveBank()
@@ -546,15 +567,41 @@ local function GetBankCategoryConfig()
 end
 
 local function MatchBankCategory(item, categoryConfig)
-    if not item or not ns.Categories or not ns.Categories.ItemMatches or not categoryConfig or categoryConfig.enabled ~= true then
+    if not item or not ns.Categories or not ns.Categories.ItemMatches then
         return nil
     end
-    for _, category in ipairs(categoryConfig.list or {}) do
-        if ns.Categories:ItemMatches(category, item) then
-            return category
+    if categoryConfig and categoryConfig.enabled == true then
+        for _, category in ipairs(categoryConfig.list or {}) do
+            if ns.Categories:ItemMatches(category, item) then
+                return category
+            end
+        end
+    end
+    if ns.Categories.GetDynamicList then
+        for _, category in ipairs(ns.Categories:GetDynamicList("bank") or {}) do
+            if ns.Categories:ItemMatches(category, item) then
+                return category
+            end
         end
     end
     return nil
+end
+
+local function GetBankActiveCategories(categoryConfig)
+    local out = {}
+    if categoryConfig and categoryConfig.enabled == true then
+        for _, category in ipairs(categoryConfig.list or {}) do
+            if type(category) == "table" and category.enabled ~= false then
+                out[#out + 1] = category
+            end
+        end
+    end
+    if ns.Categories and ns.Categories.GetDynamicList then
+        for _, category in ipairs(ns.Categories:GetDynamicList("bank") or {}) do
+            out[#out + 1] = category
+        end
+    end
+    return out
 end
 
 local function EnsureVisibleBankBagDefaults(state)
@@ -2068,14 +2115,21 @@ function OneBank:RefreshBagSlots()
     self.frame.BagSlots:Show()
 
     local size, spacing, pad = 34, 4, 6
+    local position = NormalizeRailPosition(self.bagRailPosition, "top")
+    local useVertical = position == "left" or position == "right"
     local purchasedSlots = GetNumBankSlots and (GetNumBankSlots() or 0) or 0
+    PositionBankRail(self.frame, self.frame.BagSlots, position)
     for i, bagID in ipairs(BANK_BAG_SLOTS) do
         local button = self:AcquireBagButton(i)
         if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
             ns.ItemButtonStyle.Apply(button)
         end
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad + (i - 1) * (size + spacing), -pad)
+        if useVertical then
+            button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad, -pad - (i - 1) * (size + spacing))
+        else
+            button:SetPoint("TOPLEFT", self.frame.BagSlots, "TOPLEFT", pad + (i - 1) * (size + spacing), -pad)
+        end
         button.bagID = bagID
         button.invSlot = BankBagToInventorySlotCompat(bagID)
         button.isPurchased = i <= purchasedSlots
@@ -2124,8 +2178,13 @@ function OneBank:RefreshBagSlots()
     self.frame.BagSlots:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
     self.frame.BagSlots:SetBackdropColor(0.08, 0.08, 0.08, 0.84)
     self.frame.BagSlots:SetBackdropBorderColor(0.24, 0.24, 0.24, 0.95)
-    self.frame.BagSlots:SetWidth(pad * 2 + #BANK_BAG_SLOTS * size + (#BANK_BAG_SLOTS - 1) * spacing)
-    self.frame.BagSlots:SetHeight(size + pad * 2)
+    if useVertical then
+        self.frame.BagSlots:SetWidth(size + pad * 2)
+        self.frame.BagSlots:SetHeight(pad * 2 + #BANK_BAG_SLOTS * size + (#BANK_BAG_SLOTS - 1) * spacing)
+    else
+        self.frame.BagSlots:SetWidth(pad * 2 + #BANK_BAG_SLOTS * size + (#BANK_BAG_SLOTS - 1) * spacing)
+        self.frame.BagSlots:SetHeight(size + pad * 2)
+    end
     ApplyWindowAppearance(self.frame, GetConfig())
 end
 
@@ -2412,7 +2471,8 @@ function OneBank:Refresh(layoutOnly)
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
     local categoryConfig = GetBankCategoryConfig()
-    local categoriesEnabled = categoryConfig and categoryConfig.enabled == true
+    local activeCategories = GetBankActiveCategories(categoryConfig)
+    local categoriesEnabled = #activeCategories > 0
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
     local visualSortEnabled = IsVisualSortEnabled()
@@ -2423,9 +2483,9 @@ function OneBank:Refresh(layoutOnly)
     local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
 
-    if (not cachedLayout) and categoriesEnabled and categoryConfig then
-        for index, category in ipairs(categoryConfig.list or {}) do
-            if category.enabled ~= false then
+    if (not cachedLayout) and categoriesEnabled then
+        for index, category in ipairs(activeCategories) do
+            if category.enabled ~= false and category.hidden ~= true then
                 local key = category.id or category.name or tostring(index)
                 local section = {
                     title = category.name or ("Category " .. tostring(index)),
@@ -3098,6 +3158,7 @@ function OneBank:ApplySettings()
     self.maxHeight = math.max(260, math.min(1200, tonumber(cfg.windowMaxHeight) or BANK_DEFAULT_MAX_HEIGHT))
     self.columns = CalculateColumnsFromWindowWidth(self.windowWidth, self.slotSize, self.spacing)
     self.showBagRail = cfg.showBagRail ~= false
+    self.bagRailPosition = NormalizeRailPosition(cfg.bagRailPosition, "top")
     self.visibleBags = CopyVisibleBankBagsState(cfg.visibleBags)
     self.frame:ClearAllPoints()
     self.frame:SetPoint(cfg.point or "BOTTOMLEFT", UIParent, cfg.point or "BOTTOMLEFT", cfg.x or 34, cfg.y or 126)

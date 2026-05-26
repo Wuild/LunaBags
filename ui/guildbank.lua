@@ -10,6 +10,8 @@ OneGuildBank.searchVisible = false
 OneGuildBank.columns = 14
 OneGuildBank.slotSize = 36
 OneGuildBank.spacing = 4
+OneGuildBank.tabRailPosition = "top"
+OneGuildBank.modeRailPosition = "bottom"
 OneGuildBank.mode = "bank"
 
 ns.OneGuildBank = OneGuildBank
@@ -54,6 +56,37 @@ local function Clamp01(value, fallback)
     if value < 0 then return 0 end
     if value > 1 then return 1 end
     return value
+end
+
+local function NormalizeRailPosition(position, fallback)
+    if position == "top" or position == "left" or position == "right" or position == "bottom" then
+        return position
+    end
+    return fallback or "top"
+end
+
+local function PositionGuildBankRail(frame, rail, position, offset)
+    offset = tonumber(offset) or 0
+    rail:ClearAllPoints()
+    if position == "left" then
+        rail:SetPoint("TOPRIGHT", frame, "TOPLEFT", -offset, 0)
+    elseif position == "right" then
+        rail:SetPoint("TOPLEFT", frame, "TOPRIGHT", offset, 0)
+    elseif position == "bottom" then
+        rail:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, -offset)
+    else
+        rail:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, offset)
+    end
+end
+
+local function GetRailOutwardSize(rail, position)
+    if not rail then
+        return 0
+    end
+    if position == "left" or position == "right" then
+        return rail:GetWidth() or 0
+    end
+    return rail:GetHeight() or 0
 end
 
 local function GetColorValue(color, r, g, b)
@@ -1509,16 +1542,32 @@ function OneGuildBank:RefreshModeRail()
         return
     end
     local size, spacing, pad = 34, 4, 6
+    local position = NormalizeRailPosition(self.modeRailPosition, "bottom")
+    local useVertical = position == "left" or position == "right"
+    local offset = 0
+    if position == NormalizeRailPosition(self.tabRailPosition, "top") then
+        offset = GetRailOutwardSize(self.frame.TopRail, position)
+    end
+    PositionGuildBankRail(self.frame, self.frame.BottomRail, position, offset)
     for index, mode in ipairs(MODE_BUTTONS) do
         local button = self:AcquireModeButton(index)
         button.modeKey = mode.key
         ConfigureRailButton(button, mode.label, mode.icon, self.mode == mode.key)
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", self.frame.BottomRail, "TOPLEFT", pad + (index - 1) * (size + spacing), -pad)
+        if useVertical then
+            button:SetPoint("TOPLEFT", self.frame.BottomRail, "TOPLEFT", pad, -pad - (index - 1) * (size + spacing))
+        else
+            button:SetPoint("TOPLEFT", self.frame.BottomRail, "TOPLEFT", pad + (index - 1) * (size + spacing), -pad)
+        end
         button:Show()
     end
-    self.frame.BottomRail:SetWidth(pad * 2 + #MODE_BUTTONS * size + (#MODE_BUTTONS - 1) * spacing)
-    self.frame.BottomRail:SetHeight(size + pad * 2)
+    if useVertical then
+        self.frame.BottomRail:SetWidth(size + pad * 2)
+        self.frame.BottomRail:SetHeight(pad * 2 + #MODE_BUTTONS * size + (#MODE_BUTTONS - 1) * spacing)
+    else
+        self.frame.BottomRail:SetWidth(pad * 2 + #MODE_BUTTONS * size + (#MODE_BUTTONS - 1) * spacing)
+        self.frame.BottomRail:SetHeight(size + pad * 2)
+    end
     ApplyRailBackdrop(self.frame.BottomRail)
 end
 
@@ -1603,6 +1652,9 @@ function OneGuildBank:RefreshTabs()
     local showPurchase = BuyGuildBankTab and (numTabs + 1) <= maxBuyTabs
     local displayTabs = math.min(maxTabs, numTabs + (showPurchase and 1 or 0))
     local size, spacing, pad = 34, 4, 6
+    local position = NormalizeRailPosition(self.tabRailPosition, "top")
+    local useVertical = position == "left" or position == "right"
+    PositionGuildBankRail(self.frame, self.frame.TopRail, position, 0)
     for tab = 1, displayTabs do
         local isPurchase = tab == numTabs + 1 and showPurchase
         local name, icon, isViewable, canDeposit, withdraw = nil, nil, true, nil, nil
@@ -1618,7 +1670,11 @@ function OneGuildBank:RefreshTabs()
         button.viewable = isViewable
         ConfigureRailButton(button, name or tostring(tab), icon or "Interface\\Icons\\INV_Misc_Bag_08", tab == GetCurrentTab() and not isPurchase)
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", self.frame.TopRail, "TOPLEFT", pad + (tab - 1) * (size + spacing), -pad)
+        if useVertical then
+            button:SetPoint("TOPLEFT", self.frame.TopRail, "TOPLEFT", pad, -pad - (tab - 1) * (size + spacing))
+        else
+            button:SetPoint("TOPLEFT", self.frame.TopRail, "TOPLEFT", pad + (tab - 1) * (size + spacing), -pad)
+        end
         if not isPurchase and isViewable == false then
             button.icon:SetVertexColor(1, 0.1, 0.1, 1)
             if button.icon.SetDesaturated then
@@ -1664,8 +1720,13 @@ function OneGuildBank:RefreshTabs()
         self.tabButtons[tab]:Hide()
     end
     local used = math.max(displayTabs, 1)
-    self.frame.TopRail:SetWidth(pad * 2 + used * size + math.max(0, used - 1) * spacing)
-    self.frame.TopRail:SetHeight(size + pad * 2)
+    if useVertical then
+        self.frame.TopRail:SetWidth(size + pad * 2)
+        self.frame.TopRail:SetHeight(pad * 2 + used * size + math.max(0, used - 1) * spacing)
+    else
+        self.frame.TopRail:SetWidth(pad * 2 + used * size + math.max(0, used - 1) * spacing)
+        self.frame.TopRail:SetHeight(size + pad * 2)
+    end
     self.frame.TopRail:SetShown(displayTabs > 0)
     ApplyRailBackdrop(self.frame.TopRail)
 end
@@ -1936,6 +1997,8 @@ function OneGuildBank:ApplySettings()
     self.slotSize = math.max(24, tonumber(cfg.itemSize) or 36)
     self.spacing = math.max(0, tonumber(cfg.spacing) or 4)
     self.columns = FIXED_COLUMNS
+    self.tabRailPosition = NormalizeRailPosition(cfg.tabRailPosition, "top")
+    self.modeRailPosition = NormalizeRailPosition(cfg.modeRailPosition, "bottom")
     if not self.frame then
         return
     end

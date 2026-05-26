@@ -3,6 +3,7 @@ local LunaBags = ns.LunaBags
 
 local Categories = LunaBags and LunaBags:CreateModule("categories") or {}
 Categories.customMatchers = Categories.customMatchers or {}
+Categories.dynamicProviders = Categories.dynamicProviders or {}
 
 ns.Categories = Categories
 
@@ -324,6 +325,63 @@ function Categories:RegisterMatcher(name, fn)
     end
 end
 
+function Categories:RegisterProvider(id, provider)
+    if type(id) == "string" and provider ~= nil then
+        self.dynamicProviders[id] = provider
+    end
+end
+
+function Categories:GetDynamicList(scope)
+    local out = {}
+    for _, provider in pairs(self.dynamicProviders) do
+        local ok, list
+        if type(provider) == "function" then
+            ok, list = pcall(provider, scope)
+        elseif type(provider) == "table" then
+            local fn = provider.GetCategories or provider.getCategories
+            if type(fn) == "function" then
+                ok, list = pcall(fn, provider, scope)
+            end
+        end
+        if ok and type(list) == "table" then
+            for _, category in ipairs(list) do
+                if type(category) == "table" and category.enabled ~= false and category.hidden ~= true then
+                    out[#out + 1] = category
+                end
+            end
+        end
+    end
+    return out
+end
+
+function Categories:GetActiveList(scope)
+    local out = {}
+    local cfg = EnsureScopedConfig(scope)
+    if cfg and cfg.enabled == true then
+        for _, category in ipairs(cfg.list or {}) do
+            if type(category) == "table" and category.enabled ~= false then
+                out[#out + 1] = category
+            end
+        end
+    end
+    for _, category in ipairs(self:GetDynamicList(scope)) do
+        out[#out + 1] = category
+    end
+    return out
+end
+
+function Categories:HasActiveCategories(scope)
+    local cfg = EnsureScopedConfig(scope)
+    if cfg and cfg.enabled == true then
+        for _, category in ipairs(cfg.list or {}) do
+            if type(category) == "table" and category.enabled ~= false then
+                return true
+            end
+        end
+    end
+    return #self:GetDynamicList(scope) > 0
+end
+
 function Categories:AddItemIDRule(category, itemID)
     if type(category) ~= "table" then
         return false
@@ -484,7 +542,7 @@ function Categories:IsEquipmentSetItem(item)
 end
 
 function Categories:ItemMatches(category, item)
-    if not category or category.enabled == false or not item then return false end
+    if not category or category.enabled == false or category.hidden == true or not item then return false end
     local rules = category.rules or {}
     local hasRule = false
 
@@ -557,8 +615,14 @@ end
 function Categories:MatchItem(item, scope)
     if not item then return nil end
     local cfg = EnsureScopedConfig(scope)
-    if not cfg or cfg.enabled ~= true then return nil end
-    for index, category in ipairs(cfg.list or {}) do
+    if cfg and cfg.enabled == true then
+        for index, category in ipairs(cfg.list or {}) do
+            if self:ItemMatches(category, item) then
+                return category, index
+            end
+        end
+    end
+    for index, category in ipairs(self:GetDynamicList(scope)) do
         if self:ItemMatches(category, item) then
             return category, index
         end

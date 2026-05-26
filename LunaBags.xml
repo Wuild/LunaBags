@@ -26,6 +26,7 @@
     <Script file="plugins\equipment_set_border.lua"/>
     <Script file="plugins\trash_icon.lua"/>
     <Script file="core\categories.lua"/>
+    <Script file="plugins\equipment_set_categories.lua"/>
     <Script file="core\sort.lua"/>
     <Script file="data\bags.lua"/>
     <Script file="ui\tooltip.lua"/>
