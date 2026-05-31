@@ -25,6 +25,9 @@
     <Script file="plugins\quality_border.lua"/>
     <Script file="plugins\equipment_set_border.lua"/>
     <Script file="plugins\trash_icon.lua"/>
+    <Script file="plugins\item_level_text.lua"/>
+    <Script file="plugins\quest_start_marker.lua"/>
+    <Script file="plugins\pawn_upgrade.lua"/>
     <Script file="core\categories.lua"/>
     <Script file="plugins\equipment_set_categories.lua"/>
     <Script file="core\sort.lua"/>

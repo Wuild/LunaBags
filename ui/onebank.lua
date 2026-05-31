@@ -2844,6 +2844,9 @@ end
                 end
                 if SetItemButtonCount then
                     SetItemButtonCount(b, info.item.stackCount or 0)
+                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                        ns.ItemButtonStyle.ApplyTextStyle(b)
+                    end
                 else
                     b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
                 end
@@ -2867,6 +2870,9 @@ end
                 end
                 if SetItemButtonCount then
                     SetItemButtonCount(b, 0)
+                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                        ns.ItemButtonStyle.ApplyTextStyle(b)
+                    end
                 else
                     b.count:SetText("")
                 end

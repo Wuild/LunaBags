@@ -4,6 +4,12 @@ local LunaBags = ns.LunaBags
 local ItemButtonStyle = LunaBags and LunaBags:CreateModule("itemButtonStyle") or {}
 ns.ItemButtonStyle = ItemButtonStyle
 
+local ITEM_TEXT_FONTS = {
+    expressway = "Interface\\AddOns\\LunaBags\\Art\\Expressway.ttf",
+    arial_bold = "Fonts\\ARIALNB.TTF",
+    friz = "Fonts\\FRIZQT__.TTF",
+}
+
 local function ResolveQualityBorderColor(quality)
     if not quality or quality <= 1 then
         return 0.34, 0.34, 0.34, 0.95
@@ -38,6 +44,35 @@ local function GetColorValue(color, r, g, b)
     return tonumber(color.r or color[1]) or r,
     tonumber(color.g or color[2]) or g,
     tonumber(color.b or color[3]) or b
+end
+
+local function ResolveStackCountLayout(cfg)
+    local align = (cfg and cfg.stackCountAlign) or "right"
+    if align ~= "left" then
+        align = "right"
+    end
+    local x = tonumber(cfg and cfg.stackCountOffsetX) or 3
+    local y = tonumber(cfg and cfg.stackCountOffsetY) or 3
+    return align, x, y
+end
+
+local function ApplyStackCountAnchor(count, button, cfg)
+    if not count or not count.ClearAllPoints or not count.SetPoint then
+        return
+    end
+    local align, x, y = ResolveStackCountLayout(cfg)
+    count:ClearAllPoints()
+    if align == "left" then
+        count:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", x, y)
+        if count.SetJustifyH then
+            count:SetJustifyH("LEFT")
+        end
+    else
+        count:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -x, y)
+        if count.SetJustifyH then
+            count:SetJustifyH("RIGHT")
+        end
+    end
 end
 
 
@@ -150,8 +185,15 @@ function ItemButtonStyle.GetConfig()
         frameB = fb,
         frameA = Clamp(cfg.itemFrameOpacity, 0, 1, 0.92),
         borderSize = Clamp(cfg.itemBorderSize, 0, 4, 1),
-        stackCountTextSize = Clamp(cfg.stackCountTextSize, 8, 24, 12),
-        cooldownTextSize = Clamp(cfg.cooldownTextSize, 8, 32, 16),
+        stackCountTextSize = Clamp(cfg.stackCountTextSize, 8, 24, 10),
+        cooldownTextSize = Clamp(cfg.cooldownTextSize, 8, 32, 10),
+        itemTextFont = ITEM_TEXT_FONTS[cfg.itemTextFont] or ITEM_TEXT_FONTS.expressway,
+        itemTextSize = Clamp(cfg.itemTextSize, 8, 24, 10),
+        itemTextOutline = cfg.itemTextOutline ~= false,
+        itemTextShadow = cfg.itemTextShadow ~= false,
+        stackCountAlign = (cfg.stackCountAlign == "left") and "left" or "right",
+        stackCountOffsetX = Clamp(cfg.stackCountOffsetX, 0, 20, 3),
+        stackCountOffsetY = Clamp(cfg.stackCountOffsetY, 0, 20, 3),
     }
 end
 
@@ -248,19 +290,49 @@ function ItemButtonStyle.ApplyTextStyle(button)
         return
     end
     local cfg = ItemButtonStyle.GetConfig()
-    local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+    local sharedSize = cfg.itemTextSize or 10
+    local font = cfg.itemTextFont or ITEM_TEXT_FONTS.expressway
+    local styleFlags = cfg.itemTextOutline and "OUTLINE" or ""
+    local function ApplySmoothSmallFont(region, size)
+        if not region then
+            return
+        end
+        if region.SetFont then
+            region:SetFont(font, size or sharedSize, styleFlags)
+        end
+        if region.SetFontObject then
+            region:SetFontObject(nil)
+        end
+        if cfg.itemTextShadow then
+            if region.SetShadowOffset then
+                region:SetShadowOffset(1, -1)
+            end
+            if region.SetShadowColor then
+                region:SetShadowColor(0, 0, 0, 0.9)
+            end
+        else
+            if region.SetShadowOffset then
+                region:SetShadowOffset(0, 0)
+            end
+            if region.SetShadowColor then
+                region:SetShadowColor(0, 0, 0, 0)
+            end
+        end
+    end
     local buttonName = button.GetName and button:GetName() or nil
     local count = button.count or button.Count or (buttonName and _G[buttonName .. "Count"])
     local countType = type(count)
     if (countType == "table" or countType == "userdata") and count.SetFont then
-        count:SetFont(font, cfg.stackCountTextSize or 12, "OUTLINE")
+        ApplyStackCountAnchor(count, button, cfg)
+        ApplySmoothSmallFont(count, sharedSize)
     end
     if button.GetRegions then
         for _, region in ipairs({ button:GetRegions() }) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.SetFont then
                 local name = region.GetName and region:GetName() or ""
                 if region == button.Count or region == button.count or (type(name) == "string" and name:find("Count")) then
-                    region:SetFont(font, cfg.stackCountTextSize or 12, "OUTLINE")
+                    ApplyStackCountAnchor(region, button, cfg)
+                    ApplySmoothSmallFont(region, sharedSize)
                 end
             end
         end
@@ -269,8 +341,43 @@ function ItemButtonStyle.ApplyTextStyle(button)
     if cooldown and cooldown.GetRegions then
         for _, region in ipairs({ cooldown:GetRegions() }) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.SetFont then
-                region:SetFont(font, cfg.cooldownTextSize or 16, "OUTLINE")
+                ApplySmoothSmallFont(region, sharedSize)
             end
+        end
+    end
+
+    ApplySmoothSmallFont(button.LunaBagsItemLevelText, sharedSize)
+    ApplySmoothSmallFont(button.LunaBagsQuestStartMarker, sharedSize)
+    ApplySmoothSmallFont(button.DebugSlotText, sharedSize)
+end
+
+function ItemButtonStyle.ApplyItemTextFont(fontString, size)
+    if not fontString then
+        return
+    end
+    local cfg = ItemButtonStyle.GetConfig()
+    local sharedSize = cfg.itemTextSize or 10
+    local font = cfg.itemTextFont or ITEM_TEXT_FONTS.expressway
+    local styleFlags = cfg.itemTextOutline and "OUTLINE" or ""
+    if fontString.SetFont then
+        fontString:SetFont(font, size or sharedSize, styleFlags)
+    end
+    if fontString.SetFontObject then
+        fontString:SetFontObject(nil)
+    end
+    if cfg.itemTextShadow then
+        if fontString.SetShadowOffset then
+            fontString:SetShadowOffset(1, -1)
+        end
+        if fontString.SetShadowColor then
+            fontString:SetShadowColor(0, 0, 0, 0.9)
+        end
+    else
+        if fontString.SetShadowOffset then
+            fontString:SetShadowOffset(0, 0)
+        end
+        if fontString.SetShadowColor then
+            fontString:SetShadowColor(0, 0, 0, 0)
         end
     end
 end

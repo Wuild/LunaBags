@@ -422,13 +422,20 @@ local function ApplyWindowAppearance(frame, cfg)
     end
 end
 
+local function HasKeyringSupport()
+    return KEYRING_CONTAINER
+        and type(GetContainerNumSlots) == "function"
+        and type(KeyRingButtonIDToInvSlotID) == "function"
+        and (GetContainerNumSlots(KEYRING_CONTAINER) or 0) > 0
+end
+
 local function EnsureVisibleBagDefaults(state)
     for bagID = 0, 4 do
         if state[bagID] == nil then
             state[bagID] = true
         end
     end
-    if KEYRING_CONTAINER and state[KEYRING_CONTAINER] == nil then
+    if HasKeyringSupport() and state[KEYRING_CONTAINER] == nil then
         state[KEYRING_CONTAINER] = false
     end
 end
@@ -454,7 +461,7 @@ local function GetBackpackIcon()
 end
 
 local function IsKeyringBag(bagID)
-    return KEYRING_CONTAINER and bagID == KEYRING_CONTAINER
+    return HasKeyringSupport() and bagID == KEYRING_CONTAINER
 end
 
 local function GetCurrentCharacterKey()
@@ -1539,7 +1546,7 @@ local function UpdateItemCooldown(button, bagID, slot)
 end
 
 local function KeyringHasItems()
-    if not KEYRING_CONTAINER then
+    if not HasKeyringSupport() then
         return false
     end
 
@@ -2375,12 +2382,12 @@ function OneBag:RefreshBagSlots()
     for bagID = 0, 4 do
         railBags[#railBags + 1] = bagID
     end
-    if KEYRING_CONTAINER then
+    if HasKeyringSupport() then
         railBags[#railBags + 1] = KEYRING_CONTAINER
     end
 
     local candidateCount = #railBags
-    if KEYRING_CONTAINER and not self.keyringAvailable then
+    if HasKeyringSupport() and not self.keyringAvailable then
         candidateCount = candidateCount - 1
     end
     local horizontalWidth = pad * 2 + candidateCount * size + math.max(0, candidateCount - 1) * spacing
@@ -2418,7 +2425,7 @@ function OneBag:RefreshBagSlots()
         if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
             ns.ItemButtonStyle.Apply(button)
         end
-        local showButton = not (bagID == KEYRING_CONTAINER and not self.keyringAvailable)
+        local showButton = not (HasKeyringSupport() and bagID == KEYRING_CONTAINER and not self.keyringAvailable)
         if showButton then
             shownCount = shownCount + 1
             button:ClearAllPoints()
@@ -2493,6 +2500,7 @@ function OneBag:AcquireButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBag_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBag_ItemButtonOnLeave)
+    btn.UpdateTooltip = LunaBagsOneBag_ItemButtonOnEnter
     btn:HookScript("OnDragStart", function(button)
         TrackCategoryDragFromButton(OneBag, button)
     end)
@@ -2577,6 +2585,7 @@ function OneBag:AcquireKeyringButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBag_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBag_ItemButtonOnLeave)
+    btn.UpdateTooltip = LunaBagsOneBag_ItemButtonOnEnter
 
     local icon = btn.icon or _G[btn:GetName() .. "IconTexture"] or _G[btn:GetName() .. "Icon"]
     if not icon then
@@ -2756,7 +2765,7 @@ function LunaBagsOneBag_ItemButtonOnEnter(button)
     end
     if button.bagID and button.slot then
         GameTooltip:SetBagItem(button.bagID, button.slot)
-        if IsKeyringBag(button.bagID) and not GameTooltip:GetItem() then
+        if HasKeyringSupport() and IsKeyringBag(button.bagID) and not GameTooltip:GetItem() then
             local invSlot = KeyRingButtonIDToInvSlotID and KeyRingButtonIDToInvSlotID(button.slot)
             if invSlot then
                 GameTooltip:SetInventoryItem("player", invSlot)
@@ -2924,7 +2933,7 @@ end
 
 function OneBag:BuildKeyringSlots()
     local slots = {}
-    if not KEYRING_CONTAINER or self.visibleBags[KEYRING_CONTAINER] == false or not IsViewingCurrentCharacter() then
+    if not HasKeyringSupport() or self.visibleBags[KEYRING_CONTAINER] == false or not IsViewingCurrentCharacter() then
         return slots
     end
 
@@ -3632,19 +3641,22 @@ function OneBag:Refresh(layoutOnly)
             button.DebugSlotText:Hide()
         end
 
-        if info.item then
-            if (not usingReadonlyButtons) and SetItemButtonTexture then
-                SetItemButtonTexture(button, info.item.iconFileID)
-            else
-                button.icon:SetTexture(info.item.iconFileID)
+            if info.item then
+                if (not usingReadonlyButtons) and SetItemButtonTexture then
+                    SetItemButtonTexture(button, info.item.iconFileID)
+                else
+                    button.icon:SetTexture(info.item.iconFileID)
             end
             button.icon:Show()
             local count = info.item.stackCount or 0
-            if (not usingReadonlyButtons) and SetItemButtonCount then
-                SetItemButtonCount(button, count)
-            else
-                button.count:SetText(count > 1 and count or "")
-            end
+                if (not usingReadonlyButtons) and SetItemButtonCount then
+                    SetItemButtonCount(button, count)
+                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                        ns.ItemButtonStyle.ApplyTextStyle(button)
+                    end
+                else
+                    button.count:SetText(count > 1 and count or "")
+                end
             if (not usingReadonlyButtons) and SetItemButtonQuality then
                 SetItemButtonQuality(button, info.item.quality, info.item.itemLink)
             end
@@ -3666,6 +3678,9 @@ function OneBag:Refresh(layoutOnly)
             button.icon:Hide()
             if (not usingReadonlyButtons) and SetItemButtonCount then
                 SetItemButtonCount(button, 0)
+                if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                    ns.ItemButtonStyle.ApplyTextStyle(button)
+                end
             else
                 button.count:SetText("")
             end
