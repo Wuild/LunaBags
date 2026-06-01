@@ -64,7 +64,8 @@ local function ResolveItemLevel(item)
     end
 
     if item.itemLink and GetDetailedItemLevelInfo then
-        itemLevel = tonumber(GetDetailedItemLevelInfo(item.itemLink))
+        local detailedLevel = GetDetailedItemLevelInfo(item.itemLink)
+        itemLevel = tonumber(detailedLevel)
         if itemLevel and itemLevel > 0 then
             return itemLevel
         end
