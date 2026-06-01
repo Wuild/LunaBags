@@ -423,10 +423,9 @@ local function ApplyWindowAppearance(frame, cfg)
 end
 
 local function HasKeyringSupport()
-    return KEYRING_CONTAINER
-        and type(GetContainerNumSlots) == "function"
-        and type(KeyRingButtonIDToInvSlotID) == "function"
-        and (GetContainerNumSlots(KEYRING_CONTAINER) or 0) > 0
+    return KEYRING_CONTAINER ~= nil
+        and ((C_Container and type(C_Container.GetContainerNumSlots) == "function")
+            or type(GetContainerNumSlots) == "function")
 end
 
 local function EnsureVisibleBagDefaults(state)
@@ -1545,21 +1544,6 @@ local function UpdateItemCooldown(button, bagID, slot)
     end
 end
 
-local function KeyringHasItems()
-    if not HasKeyringSupport() then
-        return false
-    end
-
-    local slots = GetNumSlotsInBag(KEYRING_CONTAINER)
-    for slot = 1, slots do
-        local info = GetItemInfoFromBag(KEYRING_CONTAINER, slot)
-        if info and info.iconFileID then
-            return true
-        end
-    end
-    return false
-end
-
 local function ItemMatchesSearch(item, searchText)
     if searchText == "" then
         return true
@@ -2329,9 +2313,6 @@ function OneBag:AcquireBagButton(index)
             end
             return
         end
-        if button.bagID == KEYRING_CONTAINER and not OneBag.keyringAvailable then
-            return
-        end
         if CursorHasAssignableItem() then
             if button.bagID == 0 then
                 PutItemInBackpack()
@@ -2377,7 +2358,6 @@ function OneBag:RefreshBagSlots()
     self.frame.BagSlots:Show()
     local size, spacing = 34, 4
     local pad = 6
-    self.keyringAvailable = KeyringHasItems()
     local railBags = {}
     for bagID = 0, 4 do
         railBags[#railBags + 1] = bagID
@@ -2387,9 +2367,6 @@ function OneBag:RefreshBagSlots()
     end
 
     local candidateCount = #railBags
-    if HasKeyringSupport() and not self.keyringAvailable then
-        candidateCount = candidateCount - 1
-    end
     local horizontalWidth = pad * 2 + candidateCount * size + math.max(0, candidateCount - 1) * spacing
     local horizontalHeight = size + pad * 2
     local verticalWidth = size + pad * 2
@@ -2425,7 +2402,7 @@ function OneBag:RefreshBagSlots()
         if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
             ns.ItemButtonStyle.Apply(button)
         end
-        local showButton = not (HasKeyringSupport() and bagID == KEYRING_CONTAINER and not self.keyringAvailable)
+        local showButton = true
         if showButton then
             shownCount = shownCount + 1
             button:ClearAllPoints()
