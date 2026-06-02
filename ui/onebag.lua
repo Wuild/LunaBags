@@ -712,7 +712,12 @@ local function AssignCursorItemToCategory(owner, category)
     end
     if added or unblacklisted then
         if owner then
-            owner._layoutModel = nil
+            if owner.InvalidateSlotCache then
+                owner:InvalidateSlotCache()
+            else
+                owner._layoutModel = nil
+                owner._layoutModelKey = nil
+            end
             if owner.Refresh then
                 owner:Refresh()
             end
@@ -748,7 +753,12 @@ local function RemoveDraggedItemFromCategory(owner)
     end
 
     if removed or blacklisted then
-        owner._layoutModel = nil
+        if owner.InvalidateSlotCache then
+            owner:InvalidateSlotCache()
+        else
+            owner._layoutModel = nil
+            owner._layoutModelKey = nil
+        end
         if owner.Refresh then
             owner:Refresh()
         end
@@ -1183,7 +1193,7 @@ local function IsBagSplitEnabled(bagID)
         return false
     end
     cfg.splitBags = cfg.splitBags or {}
-    return cfg.splitBags[bagID] == true
+    return cfg.splitBags[bagID] == true or cfg.splitBags[tostring(bagID)] == true
 end
 
 local function SetBagSplitEnabled(bagID, enabled)
@@ -1193,7 +1203,66 @@ local function SetBagSplitEnabled(bagID, enabled)
     end
     cfg.splitBags = cfg.splitBags or {}
     cfg.splitBags[bagID] = enabled == true or nil
+    cfg.splitBags[tostring(bagID)] = nil
     OneBag:InvalidateSlotCache()
+end
+
+local function GetBagSplitLayoutKey()
+    local parts = { tostring(OneBag.splitByBagRows == true) }
+    for bagID = 0, 4 do
+        parts[#parts + 1] = tostring(bagID) .. "=" .. tostring(IsBagSplitEnabled(bagID))
+    end
+    return table.concat(parts, ";")
+end
+
+local function GetBagSectionTitle(bagID)
+    if tonumber(bagID) == 0 then
+        return BACKPACK_TOOLTIP or "Backpack"
+    end
+    local invSlot = ContainerIDToInventoryIDCompat(bagID)
+    if invSlot and GetInventoryItemLink then
+        local link = GetInventoryItemLink("player", invSlot)
+        if link then
+            local name = GetItemInfo and GetItemInfo(link) or nil
+            if name and name ~= "" then
+                return name
+            end
+            local fallbackName = link:match("%[(.-)%]")
+            if fallbackName and fallbackName ~= "" then
+                return fallbackName
+            end
+        end
+    end
+    if GetBagName then
+        local name = GetBagName(bagID)
+        if name and name ~= "" then
+            return name
+        end
+    end
+    return string.format("%s %d", BAGSLOT or "Bag", tonumber(bagID) or 0)
+end
+
+local function GetCategoryLayoutKey(categoryConfig)
+    if type(categoryConfig) ~= "table" then
+        return "categories=none"
+    end
+
+    local parts = {
+        "enabled=" .. tostring(categoryConfig.enabled == true),
+        "columns=" .. tostring(tonumber(categoryConfig.columns) or 1),
+        "layout=" .. tostring(categoryConfig.layout or "masonry"),
+    }
+    for index, category in ipairs(categoryConfig.list or {}) do
+        parts[#parts + 1] = table.concat({
+            tostring(index),
+            tostring(category.id or category.name or ""),
+            tostring(category.enabled ~= false),
+            tostring(category.hidden == true),
+            tostring(tonumber(category.columns) or 0),
+            tostring(tonumber(category.minSlots) or 0),
+        }, ",")
+    end
+    return table.concat(parts, ";")
 end
 
 local function GetSortingConfig()
@@ -1289,6 +1358,36 @@ local function ToggleSlotLockFromButton(button)
     end
     local currentlyLocked = IsSlotUserLocked(bagID, slot)
     SetSlotUserLocked(bagID, slot, not currentlyLocked)
+end
+
+local function ConfigureSecureBagItemButton(button, bagID, slot, enabled)
+    if not button or not button.SetAttribute then
+        return false
+    end
+
+    -- Secure attributes are required for Classic's protected item-use path.
+    -- Do not mutate protected button attributes in combat; keep the last safe
+    -- mapping and let the normal refresh update it once combat ends.
+    if InCombatLockdown and InCombatLockdown() then
+        if not enabled then
+            return false
+        end
+        return button:GetAttribute("type") == "item"
+            and button:GetAttribute("bag") == bagID
+            and button:GetAttribute("slot") == slot
+    end
+
+    if enabled and bagID ~= nil and slot ~= nil then
+        button:SetAttribute("type", "item")
+        button:SetAttribute("bag", bagID)
+        button:SetAttribute("slot", slot)
+        return true
+    else
+        button:SetAttribute("type", nil)
+        button:SetAttribute("bag", nil)
+        button:SetAttribute("slot", nil)
+        return false
+    end
 end
 
 local function EnsureLockedCross(button)
@@ -2477,7 +2576,11 @@ function OneBag:AcquireButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBag_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBag_ItemButtonOnLeave)
-    btn.UpdateTooltip = LunaBagsOneBag_ItemButtonOnEnter
+    btn.UpdateTooltip = function(self)
+        if GameTooltip and GameTooltip:IsOwned(self) then
+            LunaBagsOneBag_ShowLiveItemTooltip(self)
+        end
+    end
     btn:HookScript("OnDragStart", function(button)
         TrackCategoryDragFromButton(OneBag, button)
     end)
@@ -2562,7 +2665,11 @@ function OneBag:AcquireKeyringButton(index)
     btn:EnableMouse(true)
     btn:SetScript("OnEnter", LunaBagsOneBag_ItemButtonOnEnter)
     btn:SetScript("OnLeave", LunaBagsOneBag_ItemButtonOnLeave)
-    btn.UpdateTooltip = LunaBagsOneBag_ItemButtonOnEnter
+    btn.UpdateTooltip = function(self)
+        if GameTooltip and GameTooltip:IsOwned(self) then
+            LunaBagsOneBag_ShowLiveItemTooltip(self)
+        end
+    end
 
     local icon = btn.icon or _G[btn:GetName() .. "IconTexture"] or _G[btn:GetName() .. "Icon"]
     if not icon then
@@ -2621,7 +2728,7 @@ end
 
 function LunaBagsOneBag_SortClicked()
     if IsVisualSortEnabled() then
-        OneBag._layoutModel = nil
+        OneBag:InvalidateSlotCache()
         OneBag:Refresh()
         return
     end
@@ -2719,6 +2826,40 @@ function LunaBagsOneBag_RailToggleClicked()
     OneBag:Refresh()
 end
 
+function LunaBagsOneBag_ShowLiveItemTooltip(button)
+    if not button or not button.bagID or not button.slot then
+        return false
+    end
+
+    if HasKeyringSupport() and IsKeyringBag(button.bagID) then
+        if ContainerFrameItemButton_OnEnter then
+            ContainerFrameItemButton_OnEnter(button)
+        end
+        if GameTooltip and not GameTooltip:GetItem() then
+            local invSlot = KeyRingButtonIDToInvSlotID and KeyRingButtonIDToInvSlotID(button.slot)
+            if invSlot then
+                GameTooltip:SetInventoryItem("player", invSlot)
+            end
+            if not GameTooltip:GetItem() and button.itemData and button.itemData.itemLink then
+                GameTooltip:SetHyperlink(button.itemData.itemLink)
+            end
+        end
+        return true
+    end
+
+    if ContainerFrameItemButton_OnEnter then
+        ContainerFrameItemButton_OnEnter(button)
+        return true
+    end
+
+    if GameTooltip and GameTooltip.SetBagItem then
+        GameTooltip:SetBagItem(button.bagID, button.slot)
+        return true
+    end
+
+    return false
+end
+
 function LunaBagsOneBag_ItemButtonOnEnter(button)
     EnsureTooltipPostHook()
     OneBag.hoveredItemID = button.itemData and button.itemData.itemID or nil
@@ -2741,16 +2882,7 @@ function LunaBagsOneBag_ItemButtonOnEnter(button)
         return
     end
     if button.bagID and button.slot then
-        GameTooltip:SetBagItem(button.bagID, button.slot)
-        if HasKeyringSupport() and IsKeyringBag(button.bagID) and not GameTooltip:GetItem() then
-            local invSlot = KeyRingButtonIDToInvSlotID and KeyRingButtonIDToInvSlotID(button.slot)
-            if invSlot then
-                GameTooltip:SetInventoryItem("player", invSlot)
-            end
-            if not GameTooltip:GetItem() and button.itemData and button.itemData.itemLink then
-                GameTooltip:SetHyperlink(button.itemData.itemLink)
-            end
-        end
+        LunaBagsOneBag_ShowLiveItemTooltip(button)
         if not OneBag.hoveredItemID then
             local _, link = GameTooltip:GetItem()
             if link then
@@ -2767,10 +2899,14 @@ function LunaBagsOneBag_ItemButtonOnEnter(button)
     end
 end
 
-function LunaBagsOneBag_ItemButtonOnLeave()
+function LunaBagsOneBag_ItemButtonOnLeave(button)
     OneBag.hoveredItemID = nil
     OneBag.hoveredButton = nil
-    GameTooltip:Hide()
+    if ContainerFrameItemButton_OnLeave then
+        ContainerFrameItemButton_OnLeave(button)
+    elseif GameTooltip then
+        GameTooltip:Hide()
+    end
 end
 
 local function GetItemDetails(itemLink, itemID, includeFullDetails)
@@ -2906,6 +3042,7 @@ end
 function OneBag:InvalidateSlotCache()
     self._slotCacheDirty = true
     self._layoutModel = nil
+    self._layoutModelKey = nil
 end
 
 function OneBag:BuildKeyringSlots()
@@ -3064,7 +3201,16 @@ function OneBag:Refresh(layoutOnly)
     EnsureVisibleBagDefaults(self.visibleBags)
     self:UpdateSearchLayout()
 
-    local cachedLayout = (layoutOnly and not IsVisualSortEnabled()) and self._layoutModel or nil
+    local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
+    local layoutKey = table.concat({
+        GetBagSplitLayoutKey(),
+        GetCategoryLayoutKey(categoryConfig),
+        tostring(self.columns or ""),
+        tostring(self.slotSize or ""),
+        tostring(self.spacing or ""),
+        tostring(IsVisualSortEnabled() == true),
+    }, ":")
+    local cachedLayout = (layoutOnly and not IsVisualSortEnabled() and self._layoutModelKey == layoutKey) and self._layoutModel or nil
     local allSlots = cachedLayout and cachedLayout.allSlots or self:BuildLiveSlots()
     local keySlots = cachedLayout and cachedLayout.keySlots or self:BuildKeyringSlots()
     local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
@@ -3104,7 +3250,6 @@ function OneBag:Refresh(layoutOnly)
     local splitSections = cachedLayout and cachedLayout.splitSections or {}
     local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
-    local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
     local categoriesEnabled = ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") or false
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
@@ -3127,6 +3272,7 @@ function OneBag:Refresh(layoutOnly)
     end
 
     if not cachedLayout and visualSortEnabled then
+        local splitByBag = {}
         for _, entry in ipairs(allSlots) do
             local category = categoriesEnabled and ns.Categories and ns.Categories:MatchItem(entry.item, "bags") or nil
             if category then
@@ -3138,8 +3284,17 @@ function OneBag:Refresh(layoutOnly)
                     categorySections[#categorySections + 1] = section
                 end
                 section.entries[#section.entries + 1] = entry
+            elseif self.splitByBagRows or IsBagSplitEnabled(entry.bagID) then
+                splitByBag[entry.bagID] = splitByBag[entry.bagID] or {}
+                splitByBag[entry.bagID][#splitByBag[entry.bagID] + 1] = entry
             else
                 nonSplit[#nonSplit + 1] = entry
+            end
+        end
+        for bagID = 0, 4 do
+            local entries = splitByBag[bagID]
+            if entries and #entries > 0 and self.visibleBags[bagID] ~= false and not IsKeyringBag(bagID) then
+                splitSections[#splitSections + 1] = { bagID = bagID, title = GetBagSectionTitle(bagID), entries = entries }
             end
         end
 
@@ -3152,6 +3307,7 @@ function OneBag:Refresh(layoutOnly)
             splitSections = splitSections,
             categorySections = categorySections,
         }
+        self._layoutModelKey = layoutKey
     elseif not cachedLayout then
         local bagBuckets = {}
         for _, entry in ipairs(allSlots) do
@@ -3188,7 +3344,7 @@ function OneBag:Refresh(layoutOnly)
                         end
                         return (a.slot or 0) < (b.slot or 0)
                     end)
-                    splitSections[#splitSections + 1] = { bagID = bagID, entries = bucket }
+                    splitSections[#splitSections + 1] = { bagID = bagID, title = GetBagSectionTitle(bagID), entries = bucket }
                 else
                     for _, entry in ipairs(bucket) do
                         nonSplit[#nonSplit + 1] = entry
@@ -3206,6 +3362,7 @@ function OneBag:Refresh(layoutOnly)
             splitSections = splitSections,
             categorySections = categorySections,
         }
+        self._layoutModelKey = layoutKey
     end
 
     local usedRows = 0
@@ -3607,10 +3764,11 @@ function OneBag:Refresh(layoutOnly)
         button.slot = info.slot
         button.BagID = info.bagID
         button.SlotID = info.slot
-        button:SetID(info.slot)
         button.itemData = info.item
         button.category = p.category
         button.virtualEmpty = info.virtualEmpty == true
+        button:SetID(info.slot)
+        local secureClickReady = usingReadonlyButtons or ConfigureSecureBagItemButton(button, info.bagID, info.slot, not button.virtualEmpty and not readOnly)
         if button.DebugSlotText and IsDebugEnabled() then
             button.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
             button.DebugSlotText:Show()
@@ -3689,7 +3847,7 @@ function OneBag:Refresh(layoutOnly)
         if ns.Plugins and not button.virtualEmpty then
             ns.Plugins:Apply(button, info, "oneBag")
         end
-        button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and ((not readOnly) or usingReadonlyButtons))
+        button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and secureClickReady and ((not readOnly) or usingReadonlyButtons))
         if button.LockOverlay then
             if (not button.virtualEmpty) and self.lockSlotsMode and not self.sortingActive and not readOnly then
                 button.LockOverlay:Show()

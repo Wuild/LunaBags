@@ -15,6 +15,7 @@ local function RefreshOneBag(deferred)
             ns.OneBag:InvalidateSlotCache()
         else
             ns.OneBag._layoutModel = nil
+            ns.OneBag._layoutModelKey = nil
         end
         ns.OneBag:ApplySettings()
         if ns.OneBag.frame and ns.OneBag.frame:IsShown() then
@@ -36,6 +37,7 @@ local function RefreshOneBank()
             ns.OneBank:InvalidateSlotCache()
         else
             ns.OneBank._layoutModel = nil
+            ns.OneBank._layoutModelKey = nil
         end
         ns.OneBank:ApplySettings()
         if ns.OneBank.frame and ns.OneBank.frame:IsShown() then
@@ -1523,10 +1525,20 @@ function BuildSortingOptions()
             set = function(_, value)
                 SetSortingSetting("visualOnly", value == true or nil)
                 if ns.OneBag then
-                    ns.OneBag._layoutModel = nil
+                    if ns.OneBag.InvalidateSlotCache then
+                        ns.OneBag:InvalidateSlotCache()
+                    else
+                        ns.OneBag._layoutModel = nil
+                        ns.OneBag._layoutModelKey = nil
+                    end
                 end
                 if ns.OneBank then
-                    ns.OneBank._layoutModel = nil
+                    if ns.OneBank.InvalidateSlotCache then
+                        ns.OneBank:InvalidateSlotCache()
+                    else
+                        ns.OneBank._layoutModel = nil
+                        ns.OneBank._layoutModelKey = nil
+                    end
                 end
                 RefreshOneBag()
                 RefreshOneBank()

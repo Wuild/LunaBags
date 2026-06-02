@@ -630,7 +630,7 @@ local function IsBankBagSplitEnabled(bagID)
         return false
     end
     cfg.splitBags = cfg.splitBags or {}
-    return cfg.splitBags[bagID] == true
+    return cfg.splitBags[bagID] == true or cfg.splitBags[tostring(bagID)] == true
 end
 
 local function SetBankBagSplitEnabled(bagID, enabled)
@@ -640,7 +640,39 @@ local function SetBankBagSplitEnabled(bagID, enabled)
     end
     cfg.splitBags = cfg.splitBags or {}
     cfg.splitBags[bagID] = enabled == true or nil
+    cfg.splitBags[tostring(bagID)] = nil
     OneBank:InvalidateSlotCache()
+end
+
+local function GetBankSplitLayoutKey()
+    local parts = {}
+    for _, bagID in ipairs(BANK_BAG_SLOTS) do
+        parts[#parts + 1] = tostring(bagID) .. "=" .. tostring(IsBankBagSplitEnabled(bagID))
+    end
+    return table.concat(parts, ";")
+end
+
+local function GetBankCategoryLayoutKey(categoryConfig)
+    if type(categoryConfig) ~= "table" then
+        return "categories=none"
+    end
+
+    local parts = {
+        "enabled=" .. tostring(categoryConfig.enabled == true),
+        "columns=" .. tostring(tonumber(categoryConfig.columns) or 1),
+        "layout=" .. tostring(categoryConfig.layout or "masonry"),
+    }
+    for index, category in ipairs(categoryConfig.list or {}) do
+        parts[#parts + 1] = table.concat({
+            tostring(index),
+            tostring(category.id or category.name or ""),
+            tostring(category.enabled ~= false),
+            tostring(category.hidden == true),
+            tostring(tonumber(category.columns) or 0),
+            tostring(tonumber(category.minSlots) or 0),
+        }, ",")
+    end
+    return table.concat(parts, ";")
 end
 
 local function FormatMoneyText(money, iconSize)
@@ -762,7 +794,12 @@ local function AssignCursorItemToCategory(owner, category)
     end
     if added or unblacklisted then
         if owner then
-            owner._layoutModel = nil
+            if owner.InvalidateSlotCache then
+                owner:InvalidateSlotCache()
+            else
+                owner._layoutModel = nil
+                owner._layoutModelKey = nil
+            end
             if owner.Refresh then
                 owner:Refresh()
             end
@@ -801,7 +838,12 @@ local function RemoveDraggedItemFromCategory(owner)
     end
 
     if removed or blacklisted then
-        owner._layoutModel = nil
+        if owner.InvalidateSlotCache then
+            owner:InvalidateSlotCache()
+        else
+            owner._layoutModel = nil
+            owner._layoutModelKey = nil
+        end
         if owner.Refresh then
             owner:Refresh()
         end
@@ -2427,6 +2469,7 @@ end
 function OneBank:InvalidateSlotCache()
     self._slotCacheDirty = true
     self._layoutModel = nil
+    self._layoutModelKey = nil
 end
 
 function OneBank:Refresh(layoutOnly)
@@ -2439,20 +2482,6 @@ function OneBank:Refresh(layoutOnly)
     if not layoutOnly then
         self:RefreshBagSlots()
     end
-
-    local searching = self.searchText and self.searchText ~= ""
-    local cachedLayout = (layoutOnly and not IsVisualSortEnabled()) and self._layoutModel or nil
-    local all = cachedLayout and cachedLayout.all or self:BuildLiveSlots()
-    local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
-    local totalSlots = cachedLayout and cachedLayout.totalSlots or nil
-    if not occupiedSlots or not totalSlots then
-        occupiedSlots, totalSlots = CountSlotUsage(all)
-    end
-    local positioned = {}
-    local sectionHeaders = {}
-    local sectionEmptyLabels = {}
-    local sectionPlaceholders = {}
-    local sectionDropTargets = {}
 
     local cols = self.columns
     local size = self.slotSize
@@ -2471,6 +2500,28 @@ function OneBank:Refresh(layoutOnly)
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
     local categoryConfig = GetBankCategoryConfig()
+    local layoutKey = table.concat({
+        GetBankSplitLayoutKey(),
+        GetBankCategoryLayoutKey(categoryConfig),
+        tostring(self.columns or ""),
+        tostring(self.slotSize or ""),
+        tostring(self.spacing or ""),
+        tostring(IsVisualSortEnabled() == true),
+    }, ":")
+    local searching = self.searchText and self.searchText ~= ""
+    local cachedLayout = (layoutOnly and not IsVisualSortEnabled() and self._layoutModelKey == layoutKey) and self._layoutModel or nil
+    local all = cachedLayout and cachedLayout.all or self:BuildLiveSlots()
+    local occupiedSlots = cachedLayout and cachedLayout.occupiedSlots or nil
+    local totalSlots = cachedLayout and cachedLayout.totalSlots or nil
+    if not occupiedSlots or not totalSlots then
+        occupiedSlots, totalSlots = CountSlotUsage(all)
+    end
+    local positioned = {}
+    local sectionHeaders = {}
+    local sectionEmptyLabels = {}
+    local sectionPlaceholders = {}
+    local sectionDropTargets = {}
+
     local activeCategories = GetBankActiveCategories(categoryConfig)
     local categoriesEnabled = #activeCategories > 0
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
@@ -2500,6 +2551,7 @@ function OneBank:Refresh(layoutOnly)
     end
 
     if not cachedLayout and visualSortEnabled then
+        local splitByBag = {}
         for _, entry in ipairs(all) do
             local category = categoriesEnabled and MatchBankCategory(entry.item, categoryConfig) or nil
             if category then
@@ -2510,8 +2562,20 @@ function OneBank:Refresh(layoutOnly)
                 else
                     uncategorized[#uncategorized + 1] = entry
                 end
+            elseif IsBankBagSplitEnabled(entry.bagID) then
+                splitByBag[entry.bagID] = splitByBag[entry.bagID] or {}
+                splitByBag[entry.bagID][#splitByBag[entry.bagID] + 1] = entry
             else
                 uncategorized[#uncategorized + 1] = entry
+            end
+        end
+        for index, bagID in ipairs(BANK_BAG_SLOTS) do
+            local entries = splitByBag[bagID]
+            if entries and #entries > 0 then
+                splitSections[#splitSections + 1] = {
+                    title = string.format("%s %d", BANK_BAG or "Bank Bag", index),
+                    entries = entries,
+                }
             end
         end
 
@@ -2523,6 +2587,7 @@ function OneBank:Refresh(layoutOnly)
             splitSections = splitSections,
             categorySections = categorySections,
         }
+        self._layoutModelKey = layoutKey
     elseif not cachedLayout then
         local splitByBag = {}
         for _, entry in ipairs(all) do
@@ -2560,6 +2625,7 @@ function OneBank:Refresh(layoutOnly)
             splitSections = splitSections,
             categorySections = categorySections,
         }
+        self._layoutModelKey = layoutKey
     end
 
 local currentRow = 0
@@ -3325,7 +3391,7 @@ end
 
 function LunaBagsOneBank_SortClicked()
     if IsBankViewMode() or IsVisualSortEnabled() then
-        OneBank._layoutModel = nil
+        OneBank:InvalidateSlotCache()
         OneBank:Refresh()
         return
     end
