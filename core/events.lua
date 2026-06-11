@@ -37,6 +37,87 @@ function LunaBags:QueueOpenWindowRefresh()
     end
 end
 
+local function CopyDirtySlots(dirtySlots)
+    if type(dirtySlots) ~= "table" then
+        return nil
+    end
+    local copy = {}
+    for bagID, slots in pairs(dirtySlots) do
+        if slots == true then
+            copy[bagID] = true
+        elseif type(slots) == "table" then
+            copy[bagID] = {}
+            for slot in pairs(slots) do
+                copy[bagID][slot] = true
+            end
+        end
+    end
+    return copy
+end
+
+function LunaBags:MarkDirtyBagSlot(bagID, slot)
+    if bagID == nil then
+        return
+    end
+    self._dirtyBagSlots = self._dirtyBagSlots or {}
+    if slot == nil then
+        self._dirtyBagSlots[bagID] = true
+        return
+    end
+    if self._dirtyBagSlots[bagID] == true then
+        return
+    end
+    self._dirtyBagSlots[bagID] = self._dirtyBagSlots[bagID] or {}
+    self._dirtyBagSlots[bagID][slot] = true
+end
+
+function LunaBags:BAG_UPDATE(_, bagID)
+    self:MarkDirtyBagSlot(bagID)
+end
+
+function LunaBags:ITEM_LOCK_CHANGED(_, bagID, slot)
+    self:MarkDirtyBagSlot(bagID, slot)
+end
+
+function LunaBags:RefreshDirtyOpenWindows(dirtySlots)
+    local anyVisible = false
+
+    if addon.OneBag and addon.OneBag.frame and addon.OneBag.frame:IsShown() then
+        anyVisible = true
+        if addon.OneBag.RefreshItemsOnly and addon.OneBag:RefreshItemsOnly(dirtySlots) then
+            -- handled
+        else
+            if addon.OneBag.InvalidateSlotCache then
+                addon.OneBag:InvalidateSlotCache()
+            end
+            if addon.OneBag.RefreshDeferred then addon.OneBag:RefreshDeferred() else addon.OneBag:Refresh() end
+        end
+    elseif addon.OneBag then
+        addon.OneBag._slotCacheDirty = true
+    end
+
+    if addon.OneBank and addon.OneBank.frame and addon.OneBank.frame:IsShown() then
+        anyVisible = true
+        if addon.OneBank.RefreshItemsOnly and addon.OneBank:RefreshItemsOnly(dirtySlots) then
+            -- handled
+        else
+            if addon.OneBank.InvalidateSlotCache then
+                addon.OneBank:InvalidateSlotCache()
+            end
+            if addon.OneBank.RefreshDeferred then addon.OneBank:RefreshDeferred() else addon.OneBank:Refresh() end
+        end
+    elseif addon.OneBank then
+        addon.OneBank._slotCacheDirty = true
+    end
+
+    if addon.OneGuildBank and addon.OneGuildBank.frame and addon.OneGuildBank.frame:IsShown() then
+        anyVisible = true
+        if addon.OneGuildBank.RefreshDeferred then addon.OneGuildBank:RefreshDeferred() else addon.OneGuildBank:Refresh() end
+    end
+
+    return anyVisible
+end
+
 function LunaBags:UpdateCurrentCharacterCacheDeferred(includeBank, refreshOpenWindows)
     if not addon.BagData then
         return
@@ -139,14 +220,13 @@ function LunaBags:EndSortSession()
 end
 
 function LunaBags:BAG_UPDATE_DELAYED()
-    if addon.OneBag and addon.OneBag.InvalidateSlotCache then
-        addon.OneBag:InvalidateSlotCache()
-    end
-    if addon.OneBank and addon.OneBank.InvalidateSlotCache then
-        addon.OneBank:InvalidateSlotCache()
-    end
-
     if self._sortSessionActive then
+        if addon.OneBag and addon.OneBag.InvalidateSlotCache then
+            addon.OneBag:InvalidateSlotCache()
+        end
+        if addon.OneBank and addon.OneBank.InvalidateSlotCache then
+            addon.OneBank:InvalidateSlotCache()
+        end
         self._sortDeferredBagUpdate = true
         local now = GetTime and GetTime() or 0
         if not self._sortLastLiveRefresh or now == 0 or (now - self._sortLastLiveRefresh) >= 0.08 then
@@ -184,7 +264,17 @@ function LunaBags:BAG_UPDATE_DELAYED()
     end
     self._lastBagUpdateAt = now
 
-    self:QueueOpenWindowRefresh()
+    local dirtySlots = CopyDirtySlots(self._dirtyBagSlots)
+    self._dirtyBagSlots = nil
+    if not self:RefreshDirtyOpenWindows(dirtySlots) then
+        if addon.OneBag and addon.OneBag.InvalidateSlotCache then
+            addon.OneBag:InvalidateSlotCache()
+        end
+        if addon.OneBank and addon.OneBank.InvalidateSlotCache then
+            addon.OneBank:InvalidateSlotCache()
+        end
+        self:QueueOpenWindowRefresh()
+    end
     local includeBank = addon.BagData and addon.BagData.IsBankAvailable and addon.BagData:IsBankAvailable() or false
     self:UpdateCurrentCharacterCacheDeferred(includeBank == true, false)
 end

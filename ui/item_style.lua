@@ -418,6 +418,7 @@ function ItemButtonStyle.ResetState(button)
     if not button or not button.StyleBG or not button.StyleBorder then
         return
     end
+    button._lunaBagsStyleDirty = true
     local cfg = ItemButtonStyle.GetConfig()
     button._styleDragging = false
     button:SetAlpha(button._baseAlpha or 1)
@@ -513,11 +514,13 @@ function ItemButtonStyle.Apply(button)
         end
         local function SetIdle(self)
             if self._styleDragging then return end
+            self._lunaBagsStyleDirty = true
             ItemButtonStyle.ResetState(self)
             ItemButtonStyle.UpdateLockedState(self)
         end
         local function SetHover(self)
             if not self.StyleBG or not self.StyleBorder then return end
+            self._lunaBagsStyleDirty = true
             local style = ItemButtonStyle.GetConfig()
             if self._styleDragging then return end
             self.StyleBG:SetBackdropColor(Brighten(style.frameR, 0.04), Brighten(style.frameG, 0.04), Brighten(style.frameB, 0.04), math.min(1, style.frameA + 0.03))
@@ -533,6 +536,7 @@ function ItemButtonStyle.Apply(button)
         end
         local function SetDrag(self)
             if not self.StyleBG or not self.StyleBorder then return end
+            self._lunaBagsStyleDirty = true
             local style = ItemButtonStyle.GetConfig()
             self._styleDragging = true
             self:SetAlpha(math.max(0.1, (self._baseAlpha or 1) * 0.72))
@@ -581,6 +585,7 @@ function ItemButtonStyle.Apply(button)
             button:RegisterEvent("MAIL_SEND_INFO_UPDATE")
             button:RegisterEvent("MAIL_CLOSED")
             button:HookScript("OnEvent", function(self)
+                self._lunaBagsStyleDirty = true
                 ItemButtonStyle.UpdateLockedState(self)
             end)
         end

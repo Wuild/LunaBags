@@ -597,6 +597,9 @@ local function RefreshOpenWindows()
 end
 
 local function RefreshCategories()
+    if ns.Categories and ns.Categories.InvalidateMatchCache then
+        ns.Categories:InvalidateMatchCache(selectedCategoryScope)
+    end
     if RefreshCategoryOptions then
         RefreshCategoryOptions()
     end

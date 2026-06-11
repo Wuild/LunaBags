@@ -145,6 +145,24 @@ local function NormalizeScope(scope)
     return (scope == "bank") and "bank" or "bags"
 end
 
+local function GetItemCacheKey(item)
+    if type(item) ~= "table" then
+        return nil
+    end
+    local id = item.itemLink or item.itemID
+    if not id then
+        return nil
+    end
+    return table.concat({
+        tostring(id),
+        tostring(item.quality or ""),
+        tostring(item.classID or ""),
+        tostring(item.subClassID or ""),
+        tostring(item.equipLoc or ""),
+        tostring(item.isQuestItem == true),
+    }, ":")
+end
+
 local function EnsureDefaultScopedFields(cfg)
     if type(cfg) ~= "table" then
         return nil
@@ -273,6 +291,24 @@ function Categories:GetConfig(scope)
     return EnsureScopedConfig(scope)
 end
 
+function Categories:InvalidateMatchCache(scope)
+    if scope then
+        if self._matchCache then
+            self._matchCache[NormalizeScope(scope)] = nil
+        end
+        if self._matchCacheSignature then
+            self._matchCacheSignature[NormalizeScope(scope)] = nil
+        end
+        if self._matchCacheDynamic then
+            self._matchCacheDynamic[NormalizeScope(scope)] = nil
+        end
+        return
+    end
+    self._matchCache = nil
+    self._matchCacheSignature = nil
+    self._matchCacheDynamic = nil
+end
+
 function Categories:GetList(scope)
     local cfg = EnsureScopedConfig(scope)
     return cfg and cfg.list or {}
@@ -291,6 +327,7 @@ function Categories:AddCategory(scope)
         rules = {},
     }
     list[#list + 1] = category
+    self:InvalidateMatchCache(scope)
     return category
 end
 
@@ -299,6 +336,7 @@ function Categories:RemoveCategory(index, scope)
     index = tonumber(index)
     if index and list[index] then
         table.remove(list, index)
+        self:InvalidateMatchCache(scope)
         return true
     end
     return false
@@ -316,18 +354,21 @@ function Categories:MoveCategory(index, direction, scope)
         return false
     end
     list[index], list[target] = list[target], list[index]
+    self:InvalidateMatchCache(scope)
     return true
 end
 
 function Categories:RegisterMatcher(name, fn)
     if type(name) == "string" and type(fn) == "function" then
         self.customMatchers[name] = fn
+        self:InvalidateMatchCache()
     end
 end
 
 function Categories:RegisterProvider(id, provider)
     if type(id) == "string" and provider ~= nil then
         self.dynamicProviders[id] = provider
+        self:InvalidateMatchCache()
     end
 end
 
@@ -402,6 +443,7 @@ function Categories:AddItemIDRule(category, itemID)
 
     existing[#existing + 1] = itemIDText
     category.rules.itemIDs = table.concat(existing, ",")
+    self:InvalidateMatchCache()
     return true
 end
 
@@ -426,6 +468,7 @@ function Categories:RemoveItemIDRule(category, itemID)
 
     if changed then
         category.rules.itemIDs = (#remaining > 0) and table.concat(remaining, ",") or nil
+        self:InvalidateMatchCache()
     end
     return changed
 end
@@ -449,6 +492,7 @@ function Categories:AddBlacklistItemID(category, itemID)
 
     existing[#existing + 1] = tostring(itemID)
     category.rules.blacklistItemIDs = table.concat(existing, ",")
+    self:InvalidateMatchCache()
     return true
 end
 
@@ -473,6 +517,7 @@ function Categories:RemoveBlacklistItemID(category, itemID)
 
     if changed then
         category.rules.blacklistItemIDs = (#remaining > 0) and table.concat(remaining, ",") or nil
+        self:InvalidateMatchCache()
     end
     return changed
 end
@@ -612,20 +657,92 @@ function Categories:ItemMatchesNonItemIDRules(category, item)
     return matched == true
 end
 
+local function AppendRuleSignature(parts, rules)
+    if type(rules) ~= "table" then
+        return
+    end
+    local keys = {}
+    for key in pairs(rules) do
+        keys[#keys + 1] = tostring(key)
+    end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        parts[#parts + 1] = key .. "=" .. tostring(rules[key])
+    end
+end
+
+function Categories:GetMatchCacheSignature(scope)
+    scope = NormalizeScope(scope)
+    self._matchCacheSignature = self._matchCacheSignature or {}
+    self._matchCacheDynamic = self._matchCacheDynamic or {}
+    local cached = self._matchCacheSignature[scope]
+    if cached then
+        return cached, self._matchCacheDynamic[scope] or {}
+    end
+
+    local parts = {}
+    local cfg = EnsureScopedConfig(scope)
+
+    if cfg then
+        parts[#parts + 1] = "enabled=" .. tostring(cfg.enabled == true)
+        parts[#parts + 1] = "layout=" .. tostring(cfg.layout or "")
+        for index, category in ipairs(cfg.list or {}) do
+            if type(category) == "table" and category.enabled ~= false then
+                parts[#parts + 1] = "c:" .. tostring(index) .. ":" .. tostring(category.id or "") .. ":" .. tostring(category.name or "")
+                AppendRuleSignature(parts, category.rules)
+            end
+        end
+    end
+
+    local dynamic = self:GetDynamicList(scope)
+    for index, category in ipairs(dynamic) do
+        parts[#parts + 1] = "d:" .. tostring(index) .. ":" .. tostring(category.id or "") .. ":" .. tostring(category.name or "")
+        AppendRuleSignature(parts, category.rules)
+    end
+
+    local signature = table.concat(parts, "|")
+    self._matchCache = self._matchCache or {}
+    self._matchCache[scope] = nil
+    self._matchCacheSignature[scope] = signature
+    self._matchCacheDynamic[scope] = dynamic
+    return signature, dynamic
+end
+
 function Categories:MatchItem(item, scope)
     if not item then return nil end
+    scope = NormalizeScope(scope)
+    local itemKey = GetItemCacheKey(item)
+    local signature, dynamicList = self:GetMatchCacheSignature(scope)
+    if itemKey then
+        self._matchCache = self._matchCache or {}
+        self._matchCache[scope] = self._matchCache[scope] or {}
+        local cached = self._matchCache[scope][itemKey]
+        if cached and cached.signature == signature then
+            return cached.category, cached.index
+        end
+    end
+
     local cfg = EnsureScopedConfig(scope)
     if cfg and cfg.enabled == true then
         for index, category in ipairs(cfg.list or {}) do
             if self:ItemMatches(category, item) then
+                if itemKey then
+                    self._matchCache[scope][itemKey] = { signature = signature, category = category, index = index }
+                end
                 return category, index
             end
         end
     end
-    for index, category in ipairs(self:GetDynamicList(scope)) do
+    for index, category in ipairs(dynamicList or self:GetDynamicList(scope)) do
         if self:ItemMatches(category, item) then
+            if itemKey then
+                self._matchCache[scope][itemKey] = { signature = signature, category = category, index = index }
+            end
             return category, index
         end
+    end
+    if itemKey then
+        self._matchCache[scope][itemKey] = { signature = signature }
     end
     return nil
 end

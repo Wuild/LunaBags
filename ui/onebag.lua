@@ -3172,6 +3172,35 @@ function OneBag:BuildKeyringSlots()
     return slots
 end
 
+local function BuildCurrentOneBagSlotEntry(bagID, slot)
+    local itemInfo = GetItemInfoFromBag(bagID, slot)
+    local itemLink = itemInfo and GetItemLinkFromBag(bagID, slot) or nil
+    local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
+    local includeFullDetails = OneBag.searchText and OneBag.searchText ~= ""
+    local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
+        GetItemDetails(itemLink, itemID, includeFullDetails)
+    return {
+        bagID = bagID,
+        slot = slot,
+        item = itemInfo and {
+            iconFileID = itemInfo.iconFileID,
+            stackCount = itemInfo.stackCount,
+            quality = itemInfo.quality or itemQuality,
+            isQuestItem = GetQuestItemFlag(bagID, slot, itemInfo),
+            itemLink = itemLink,
+            itemID = itemID,
+            name = itemName,
+            itemLevel = itemLevel,
+            itemTypeName = itemTypeName,
+            subTypeName = subTypeName,
+            equipLoc = equipLoc,
+            sellPrice = sellPrice,
+            classID = classID,
+            subClassID = subClassID,
+        } or nil,
+    }
+end
+
 AddCharacterItemCountTooltip = function(itemID, itemLink)
     if not ns.BagData then
         return
@@ -3271,6 +3300,446 @@ AddMoneyTooltipBreakdown = function(owner)
         end
     end
     GameTooltip:Show()
+end
+
+local ONEBAG_BUTTONS_PER_FRAME = 18
+
+local function StopOneBagButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    self._buttonRenderJob = nil
+    if self._buttonRenderFrame then
+        self._buttonRenderFrame:SetScript("OnUpdate", nil)
+    end
+end
+
+local function RenderOneBagPositionedButton(self, job, i)
+    local p = job.positioned[i]
+    if not p then
+        return
+    end
+
+    local button = job.usingReadonlyButtons and self:AcquireReadonlyButton(i) or self:AcquireButton(i)
+    button:SetSize(job.size, job.size)
+    if (not job.layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+        ns.ItemButtonStyle.Apply(button)
+        button._lunaBagsStyleDirty = true
+    end
+    local col = p.col
+    local row = p.row
+    local extraY = p.yOffset or 0
+    button:ClearAllPoints()
+    button:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", job.gridInsetX + col * (job.size + job.spacing), -job.gridInsetY - row * (job.size + job.spacing) - extraY)
+    if job.layoutOnly then
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
+            ns.ItemButtonStyle.ResetState(button)
+        end
+        button:Show()
+        return
+    end
+
+    local info = p.entry
+    local isMatch = ItemMatchesSearch(info.item, self.searchText)
+    local slotParent = self:GetBagSlotParent(info.bagID, self.frame.content)
+    if slotParent and button:GetParent() ~= slotParent then
+        button:SetParent(slotParent)
+    end
+    button.bagID = info.bagID
+    button.slot = info.slot
+    button.BagID = info.bagID
+    button.SlotID = info.slot
+    button.itemData = info.item
+    button.category = p.category
+    button.virtualEmpty = info.virtualEmpty == true
+    button:SetID(info.slot)
+    local secureClickReady = job.usingReadonlyButtons or ConfigureSecureBagItemButton(button, info.bagID, info.slot, not button.virtualEmpty and not job.readOnly)
+    if button.DebugSlotText and IsDebugEnabled() then
+        button.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
+        button.DebugSlotText:Show()
+    elseif button.DebugSlotText then
+        button.DebugSlotText:Hide()
+    end
+
+    local alpha = info.item and ((job.searching and not isMatch) and 0.22 or 1) or ((job.searching and not isMatch) and 0.18 or 0.55)
+    if self.lockSlotsMode then alpha = 1 end
+    local renderSignature = GetButtonRenderSignature(info, "oneBag", job.readOnly, alpha, self.sortingActive, job.pluginSignature)
+    local visualDirty = button._lunaBagsRenderSignature ~= renderSignature
+
+    if visualDirty then
+        if info.item then
+            if (not job.usingReadonlyButtons) and SetItemButtonTexture then
+                SetItemButtonTexture(button, info.item.iconFileID)
+            else
+                button.icon:SetTexture(info.item.iconFileID)
+            end
+            button.icon:Show()
+            local count = info.item.stackCount or 0
+            if (not job.usingReadonlyButtons) and SetItemButtonCount then
+                SetItemButtonCount(button, count)
+                if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                    ns.ItemButtonStyle.ApplyTextStyle(button)
+                end
+            else
+                button.count:SetText(count > 1 and count or "")
+            end
+            if (not job.usingReadonlyButtons) and SetItemButtonQuality then
+                SetItemButtonQuality(button, info.item.quality, info.item.itemLink)
+            end
+            if (not job.usingReadonlyButtons) and IsViewingCurrentCharacter() then
+                UpdateItemCooldown(button, info.bagID, info.slot)
+            else
+                ClearItemCooldown(button)
+            end
+        else
+            if (not job.usingReadonlyButtons) and SetItemButtonTexture then
+                SetItemButtonTexture(button, nil)
+            else
+                button.icon:SetTexture(nil)
+            end
+            button.icon:Hide()
+            if (not job.usingReadonlyButtons) and SetItemButtonCount then
+                SetItemButtonCount(button, 0)
+                if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                    ns.ItemButtonStyle.ApplyTextStyle(button)
+                end
+            else
+                button.count:SetText("")
+            end
+            if (not job.usingReadonlyButtons) and SetItemButtonQuality then
+                SetItemButtonQuality(button, nil)
+            end
+            ClearItemCooldown(button)
+        end
+        button._lunaBagsSortingDesaturated = self.sortingActive == true
+        if button.icon and button.icon.SetDesaturated then
+            button.icon:SetDesaturated(self.sortingActive == true)
+        end
+        button._lunaBagsRenderSignature = renderSignature
+    end
+    local pluginRenderSignature = renderSignature .. ":" .. tostring(job.pluginSignature or "")
+    local pluginDirty = visualDirty or button._lunaBagsStyleDirty == true or button._lunaBagsPluginSignature ~= pluginRenderSignature
+    if pluginDirty then
+        UpdateButtonStyleBorderForItem(button, info.item)
+        if ns.Plugins and not button.virtualEmpty then
+            ns.Plugins:Apply(button, info, "oneBag")
+        end
+        button._lunaBagsPluginSignature = pluginRenderSignature
+        button._lunaBagsStyleDirty = nil
+    end
+    button:SetAlpha(alpha)
+    button._baseAlpha = alpha
+    local lockCross = EnsureLockedCross(button)
+    if (not button.virtualEmpty) and self.lockSlotsMode and IsSlotUserLocked(info.bagID, info.slot) then
+        lockCross:Show()
+        lockCross.d1:Show()
+        lockCross.d2:Show()
+    else
+        lockCross:Hide()
+        lockCross.d1:Hide()
+        lockCross.d2:Hide()
+    end
+    SetNewItemGlowShown(button, (not button.virtualEmpty) and IsSlotNewItem(info.bagID, info.slot, info.item))
+    button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and secureClickReady and ((not job.readOnly) or job.usingReadonlyButtons))
+    if button.LockOverlay then
+        if (not button.virtualEmpty) and self.lockSlotsMode and not self.sortingActive and not job.readOnly then
+            button.LockOverlay:Show()
+        else
+            button.LockOverlay:Hide()
+        end
+    end
+    button:Show()
+end
+
+local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
+    for i = used + 1, #self.buttons do
+        local b = self.buttons[i]
+        if b and b.LockedCross then
+            b.LockedCross:Hide()
+            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
+            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+        end
+        if b and b.LockOverlay then
+            b.LockOverlay:Hide()
+        end
+        if b and b.NewItemGlow then
+            SetNewItemGlowShown(b, false)
+        end
+        if b and b.DebugSlotText then
+            b.DebugSlotText:Hide()
+        end
+        if b then
+            b._lunaBagsRenderSignature = nil
+            b._lunaBagsPluginSignature = nil
+            b._lunaBagsStyleDirty = nil
+        end
+        self.buttons[i]:Hide()
+    end
+    for i = used + 1, #self.readonlyButtons do
+        if self.readonlyButtons[i] and self.readonlyButtons[i].DebugSlotText then
+            self.readonlyButtons[i].DebugSlotText:Hide()
+        end
+        if self.readonlyButtons[i] and self.readonlyButtons[i].NewItemGlow then
+            SetNewItemGlowShown(self.readonlyButtons[i], false)
+        end
+        if self.readonlyButtons[i] then
+            self.readonlyButtons[i]._lunaBagsRenderSignature = nil
+            self.readonlyButtons[i]._lunaBagsPluginSignature = nil
+            self.readonlyButtons[i]._lunaBagsStyleDirty = nil
+        end
+        self.readonlyButtons[i]:Hide()
+    end
+    if usingReadonlyButtons then
+        for i = 1, #self.buttons do
+            local b = self.buttons[i]
+            if b then
+                if b.LockOverlay then b.LockOverlay:Hide() end
+                if b.LockedCross then
+                    b.LockedCross:Hide()
+                    if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
+                    if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+                end
+                if b.DebugSlotText then b.DebugSlotText:Hide() end
+                b._lunaBagsRenderSignature = nil
+                b._lunaBagsPluginSignature = nil
+                b._lunaBagsStyleDirty = nil
+                b:Hide()
+            end
+        end
+    else
+        for i = 1, #self.readonlyButtons do
+            if self.readonlyButtons[i] then
+                if self.readonlyButtons[i].NewItemGlow then SetNewItemGlowShown(self.readonlyButtons[i], false) end
+                if self.readonlyButtons[i].DebugSlotText then self.readonlyButtons[i].DebugSlotText:Hide() end
+                self.readonlyButtons[i]._lunaBagsRenderSignature = nil
+                self.readonlyButtons[i]._lunaBagsPluginSignature = nil
+                self.readonlyButtons[i]._lunaBagsStyleDirty = nil
+                self.readonlyButtons[i]:Hide()
+            end
+        end
+    end
+
+    if self.frame.KeyringPanel then
+        self.frame.KeyringPanel:Hide()
+    end
+    for i = 1, #self.keyringButtons do
+        local b = self.keyringButtons[i]
+        if b and b.LockedCross then
+            b.LockedCross:Hide()
+            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
+            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+        end
+        if b and b.LockOverlay then
+            b.LockOverlay:Hide()
+        end
+        if b and b.NewItemGlow then
+            SetNewItemGlowShown(b, false)
+        end
+        if b then
+            b._lunaBagsRenderSignature = nil
+            b._lunaBagsPluginSignature = nil
+            b._lunaBagsStyleDirty = nil
+        end
+        self.keyringButtons[i]:Hide()
+    end
+end
+
+local function StartOneBagButtonRenderJob(self, job)
+    StopOneBagButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    job.token = self._buttonRenderToken
+    job.index = 1
+    self._buttonRenderJob = job
+
+    local function process(limit)
+        local processed = 0
+        while job.index <= job.used and processed < limit do
+            RenderOneBagPositionedButton(self, job, job.index)
+            job.index = job.index + 1
+            processed = processed + 1
+        end
+        if job.index > job.used then
+            self._buttonRenderJob = nil
+            if self._buttonRenderFrame then
+                self._buttonRenderFrame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
+    if job.layoutOnly or not CreateFrame then
+        process(job.used)
+        return
+    end
+
+    if not self._buttonRenderFrame then
+        self._buttonRenderFrame = CreateFrame("Frame")
+    end
+    process(math.min(job.used, ONEBAG_BUTTONS_PER_FRAME))
+    if job.index <= job.used then
+        self._buttonRenderFrame:SetScript("OnUpdate", function(frame)
+            if not self._buttonRenderJob or self._buttonRenderJob.token ~= job.token or not self.frame or not self.frame:IsShown() then
+                self._buttonRenderJob = nil
+                frame:SetScript("OnUpdate", nil)
+                return
+            end
+            process(ONEBAG_BUTTONS_PER_FRAME)
+        end)
+    end
+end
+
+local function BuildPositionedSlotIndex(positioned)
+    local index = {}
+    for i, p in ipairs(positioned or {}) do
+        local entry = p and p.entry
+        if entry and entry.bagID ~= nil and entry.slot ~= nil then
+            index[GetSlotKey(entry.bagID, entry.slot)] = i
+        end
+    end
+    return index
+end
+
+local function HasDirtySlot(dirtySlots)
+    if type(dirtySlots) ~= "table" then
+        return false
+    end
+    for _, slots in pairs(dirtySlots) do
+        if slots == true then
+            return true
+        end
+        if type(slots) == "table" then
+            for _ in pairs(slots) do
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function OneBag:CanRefreshItemsOnly()
+    if not self.frame or not self.frame:IsShown() or not IsViewingCurrentCharacter() then
+        return false
+    end
+    if IsVisualSortEnabled() then
+        return false
+    end
+    if ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") then
+        return false
+    end
+    return self._lastButtonRenderTemplate and self._lastButtonRenderTemplate.positioned and self._lastButtonRenderTemplate.slotIndex
+end
+
+function OneBag:RefreshItemsOnly(dirtySlots)
+    if not self:CanRefreshItemsOnly() or not HasDirtySlot(dirtySlots) then
+        return false
+    end
+
+    local previous = self._lastButtonRenderTemplate
+    local positioned = previous.positioned
+    local slotIndex = previous.slotIndex
+    local changedIndexes = {}
+
+    for rawBagID, slots in pairs(dirtySlots) do
+        local bagID = tonumber(rawBagID) or rawBagID
+        if ((type(bagID) == "number" and bagID >= 0 and bagID <= 4) or bagID == KEYRING_CONTAINER) and self.visibleBags[bagID] ~= false then
+            if slots == true then
+                local slotCount = GetNumSlotsInBag(bagID)
+                local mappedSlots = 0
+                for slot = 1, slotCount do
+                    if slotIndex[GetSlotKey(bagID, slot)] then
+                        mappedSlots = mappedSlots + 1
+                    end
+                end
+                if mappedSlots ~= slotCount then
+                    return false
+                end
+                for slot = 1, slotCount do
+                    local index = slotIndex[GetSlotKey(bagID, slot)]
+                    if index and positioned[index] then
+                        positioned[index].entry = BuildCurrentOneBagSlotEntry(bagID, slot)
+                        changedIndexes[#changedIndexes + 1] = index
+                    end
+                end
+            elseif type(slots) == "table" then
+                for rawSlot in pairs(slots) do
+                    local slot = tonumber(rawSlot) or rawSlot
+                    local index = slotIndex[GetSlotKey(bagID, slot)]
+                    if index and positioned[index] then
+                        positioned[index].entry = BuildCurrentOneBagSlotEntry(bagID, slot)
+                        changedIndexes[#changedIndexes + 1] = index
+                    end
+                end
+            end
+        end
+    end
+
+    if #changedIndexes == 0 then
+        return false
+    end
+
+    table.sort(changedIndexes)
+    local currentSlots = {}
+    for _, p in ipairs(positioned) do
+        currentSlots[#currentSlots + 1] = p.entry
+    end
+    local occupiedSlots, totalSlots = CountSlotUsage(currentSlots)
+    if self.frame.MoneyBar and self.frame.MoneyBar.Label then
+        self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+    end
+    if self.frame.MoneyBar and self.frame.MoneyBar.Text then
+        self.frame.MoneyBar.Text:SetText(FormatMoneyText(GetMoney and GetMoney() or 0, 14))
+    end
+
+    local job = {
+        positioned = positioned,
+        used = #positioned,
+        size = previous.size,
+        spacing = previous.spacing,
+        gridInsetX = previous.gridInsetX,
+        gridInsetY = previous.gridInsetY,
+        layoutOnly = false,
+        readOnly = false,
+        searching = self.searchText and self.searchText ~= "",
+        usingReadonlyButtons = false,
+        pluginSignature = GetPluginRenderSignature(),
+        indexes = changedIndexes,
+    }
+
+    StopOneBagButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    job.token = self._buttonRenderToken
+    job.index = 1
+    self._buttonRenderJob = job
+
+    local function process(limit)
+        local processed = 0
+        while job.index <= #job.indexes and processed < limit do
+            RenderOneBagPositionedButton(self, job, job.indexes[job.index])
+            job.index = job.index + 1
+            processed = processed + 1
+        end
+        if job.index > #job.indexes then
+            self._buttonRenderJob = nil
+            if self._buttonRenderFrame then
+                self._buttonRenderFrame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
+    if not self._buttonRenderFrame then
+        self._buttonRenderFrame = CreateFrame("Frame")
+    end
+    process(math.min(#job.indexes, ONEBAG_BUTTONS_PER_FRAME))
+    if job.index <= #job.indexes then
+        self._buttonRenderFrame:SetScript("OnUpdate", function(frame)
+            if not self._buttonRenderJob or self._buttonRenderJob.token ~= job.token or not self.frame or not self.frame:IsShown() then
+                self._buttonRenderJob = nil
+                frame:SetScript("OnUpdate", nil)
+                return
+            end
+            process(ONEBAG_BUTTONS_PER_FRAME)
+        end)
+    end
+
+    self._slotCacheDirty = true
+    return true
 end
 
 function OneBag:Refresh(layoutOnly)
@@ -3816,212 +4285,24 @@ function OneBag:Refresh(layoutOnly)
     used = #positioned
     local usingReadonlyButtons = readOnly
     local pluginSignature = GetPluginRenderSignature()
-    for i = 1, used do
-        local button = usingReadonlyButtons and self:AcquireReadonlyButton(i) or self:AcquireButton(i)
-        button:SetSize(size, size)
-        if (not layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
-            ns.ItemButtonStyle.Apply(button)
-        end
-        local p = positioned[i]
-        local col = p.col
-        local row = p.row
-        local extraY = p.yOffset or 0
-        button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + col * (size + spacing), -gridInsetY - row * (size + spacing) - extraY)
-        if layoutOnly then
-            if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
-                ns.ItemButtonStyle.ResetState(button)
-            end
-            button:Show()
-        else
-
-        local info = p.entry
-        local isMatch = ItemMatchesSearch(info.item, self.searchText)
-        local slotParent = self:GetBagSlotParent(info.bagID, self.frame.content)
-        if slotParent and button:GetParent() ~= slotParent then
-            button:SetParent(slotParent)
-        end
-        button.bagID = info.bagID
-        button.slot = info.slot
-        button.BagID = info.bagID
-        button.SlotID = info.slot
-        button.itemData = info.item
-        button.category = p.category
-        button.virtualEmpty = info.virtualEmpty == true
-        button:SetID(info.slot)
-        local secureClickReady = usingReadonlyButtons or ConfigureSecureBagItemButton(button, info.bagID, info.slot, not button.virtualEmpty and not readOnly)
-        if button.DebugSlotText and IsDebugEnabled() then
-            button.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
-            button.DebugSlotText:Show()
-        elseif button.DebugSlotText then
-            button.DebugSlotText:Hide()
-        end
-
-        local alpha = info.item and ((searching and not isMatch) and 0.22 or 1) or ((searching and not isMatch) and 0.18 or 0.55)
-        if self.lockSlotsMode then alpha = 1 end
-        local renderSignature = GetButtonRenderSignature(info, "oneBag", readOnly, alpha, self.sortingActive, pluginSignature)
-        local visualDirty = button._lunaBagsRenderSignature ~= renderSignature
-
-        if visualDirty then
-            if info.item then
-                if (not usingReadonlyButtons) and SetItemButtonTexture then
-                    SetItemButtonTexture(button, info.item.iconFileID)
-                else
-                    button.icon:SetTexture(info.item.iconFileID)
-                end
-                button.icon:Show()
-                local count = info.item.stackCount or 0
-                if (not usingReadonlyButtons) and SetItemButtonCount then
-                    SetItemButtonCount(button, count)
-                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                        ns.ItemButtonStyle.ApplyTextStyle(button)
-                    end
-                else
-                    button.count:SetText(count > 1 and count or "")
-                end
-                if (not usingReadonlyButtons) and SetItemButtonQuality then
-                    SetItemButtonQuality(button, info.item.quality, info.item.itemLink)
-                end
-                if (not usingReadonlyButtons) and IsViewingCurrentCharacter() then
-                    UpdateItemCooldown(button, info.bagID, info.slot)
-                else
-                    ClearItemCooldown(button)
-                end
-            else
-                if (not usingReadonlyButtons) and SetItemButtonTexture then
-                    SetItemButtonTexture(button, nil)
-                else
-                    button.icon:SetTexture(nil)
-                end
-                button.icon:Hide()
-                if (not usingReadonlyButtons) and SetItemButtonCount then
-                    SetItemButtonCount(button, 0)
-                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                        ns.ItemButtonStyle.ApplyTextStyle(button)
-                    end
-                else
-                    button.count:SetText("")
-                end
-                if (not usingReadonlyButtons) and SetItemButtonQuality then
-                    SetItemButtonQuality(button, nil)
-                end
-                ClearItemCooldown(button)
-            end
-            UpdateButtonStyleBorderForItem(button, info.item)
-            button._lunaBagsSortingDesaturated = self.sortingActive == true
-            if button.icon and button.icon.SetDesaturated then
-                button.icon:SetDesaturated(self.sortingActive == true)
-            end
-            if ns.Plugins and not button.virtualEmpty then
-                ns.Plugins:Apply(button, info, "oneBag")
-            end
-            button._lunaBagsRenderSignature = renderSignature
-        end
-        button:SetAlpha(alpha)
-        button._baseAlpha = alpha
-        local lockCross = EnsureLockedCross(button)
-        if (not button.virtualEmpty) and self.lockSlotsMode and IsSlotUserLocked(info.bagID, info.slot) then
-            lockCross:Show()
-            lockCross.d1:Show()
-            lockCross.d2:Show()
-        else
-            lockCross:Hide()
-            lockCross.d1:Hide()
-            lockCross.d2:Hide()
-        end
-        SetNewItemGlowShown(button, (not button.virtualEmpty) and IsSlotNewItem(info.bagID, info.slot, info.item))
-        button:EnableMouse((not button.virtualEmpty) and (self.sortingActive ~= true) and secureClickReady and ((not readOnly) or usingReadonlyButtons))
-        if button.LockOverlay then
-            if (not button.virtualEmpty) and self.lockSlotsMode and not self.sortingActive and not readOnly then
-                button.LockOverlay:Show()
-            else
-                button.LockOverlay:Hide()
-            end
-        end
-        button:Show()
-        end
-    end
-
-    for i = used + 1, #self.buttons do
-        local b = self.buttons[i]
-        if b and b.LockedCross then
-            b.LockedCross:Hide()
-            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
-        end
-        if b and b.LockOverlay then
-            b.LockOverlay:Hide()
-        end
-        if b and b.NewItemGlow then
-            SetNewItemGlowShown(b, false)
-        end
-        if b and b.DebugSlotText then
-            b.DebugSlotText:Hide()
-        end
-        if b then
-            b._lunaBagsRenderSignature = nil
-        end
-        self.buttons[i]:Hide()
-    end
-    for i = used + 1, #self.readonlyButtons do
-        if self.readonlyButtons[i] and self.readonlyButtons[i].DebugSlotText then
-            self.readonlyButtons[i].DebugSlotText:Hide()
-        end
-        if self.readonlyButtons[i] and self.readonlyButtons[i].NewItemGlow then
-            SetNewItemGlowShown(self.readonlyButtons[i], false)
-        end
-        if self.readonlyButtons[i] then
-            self.readonlyButtons[i]._lunaBagsRenderSignature = nil
-        end
-        self.readonlyButtons[i]:Hide()
-    end
-    if usingReadonlyButtons then
-        for i = 1, #self.buttons do
-            local b = self.buttons[i]
-            if b then
-                if b.LockOverlay then b.LockOverlay:Hide() end
-                if b.LockedCross then
-                    b.LockedCross:Hide()
-                    if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-                    if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
-                end
-                if b.DebugSlotText then b.DebugSlotText:Hide() end
-                b._lunaBagsRenderSignature = nil
-                b:Hide()
-            end
-        end
-    else
-        for i = 1, #self.readonlyButtons do
-            if self.readonlyButtons[i] then
-                if self.readonlyButtons[i].NewItemGlow then SetNewItemGlowShown(self.readonlyButtons[i], false) end
-                if self.readonlyButtons[i].DebugSlotText then self.readonlyButtons[i].DebugSlotText:Hide() end
-                self.readonlyButtons[i]._lunaBagsRenderSignature = nil
-                self.readonlyButtons[i]:Hide()
-            end
-        end
-    end
-
-    if self.frame.KeyringPanel then
-        self.frame.KeyringPanel:Hide()
-    end
-    for i = 1, #self.keyringButtons do
-        local b = self.keyringButtons[i]
-        if b and b.LockedCross then
-            b.LockedCross:Hide()
-            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
-        end
-        if b and b.LockOverlay then
-            b.LockOverlay:Hide()
-        end
-        if b and b.NewItemGlow then
-            SetNewItemGlowShown(b, false)
-        end
-        if b then
-            b._lunaBagsRenderSignature = nil
-        end
-        self.keyringButtons[i]:Hide()
-    end
+    CleanupOneBagButtons(self, used, usingReadonlyButtons)
+    local renderJob = {
+        positioned = positioned,
+        used = used,
+        size = size,
+        spacing = spacing,
+        gridInsetX = gridInsetX,
+        gridInsetY = gridInsetY,
+        layoutOnly = layoutOnly,
+        readOnly = readOnly,
+        searching = searching,
+        usingReadonlyButtons = usingReadonlyButtons,
+        pluginSignature = pluginSignature,
+        allSlots = allSlots,
+        slotIndex = BuildPositionedSlotIndex(positioned),
+    }
+    self._lastButtonRenderTemplate = renderJob
+    StartOneBagButtonRenderJob(self, renderJob)
 
     local money = GetMoney and GetMoney() or 0
     if self.frame.moneyText then

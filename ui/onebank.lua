@@ -2533,6 +2533,388 @@ function OneBank:InvalidateSlotCache()
     self._layoutModelKey = nil
 end
 
+local function GetBankSlotKey(bagID, slot)
+    return tostring(bagID) .. ":" .. tostring(slot)
+end
+
+local function BuildCurrentOneBankSlotEntry(bagID, slot)
+    local itemInfo = GetItemInfoFromBag(bagID, slot)
+    local itemLink = itemInfo and GetItemLinkFromBag(bagID, slot) or nil
+    local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
+    local includeFullDetails = OneBank.searchText and OneBank.searchText ~= ""
+    local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
+        GetItemDetails(itemLink, itemID, includeFullDetails)
+    return {
+        bagID = bagID,
+        slot = slot,
+        item = itemInfo and {
+            iconFileID = itemInfo.iconFileID,
+            stackCount = itemInfo.stackCount,
+            quality = itemInfo.quality or itemQuality,
+            isQuestItem = GetQuestItemFlag(bagID, slot, itemInfo),
+            itemLink = itemLink,
+            itemID = itemID,
+            name = itemName,
+            itemLevel = itemLevel,
+            itemTypeName = itemTypeName,
+            subTypeName = subTypeName,
+            equipLoc = equipLoc,
+            sellPrice = sellPrice,
+            classID = classID,
+            subClassID = subClassID,
+        } or nil,
+    }
+end
+
+local ONEBANK_BUTTONS_PER_FRAME = 18
+
+local function StopOneBankButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    self._buttonRenderJob = nil
+    if self._buttonRenderFrame then
+        self._buttonRenderFrame:SetScript("OnUpdate", nil)
+    end
+end
+
+local function RenderOneBankPositionedButton(self, job, i)
+    local pos = job.positioned[i]
+    if not pos then
+        return
+    end
+
+    local b = self:AcquireButton(i)
+    b:SetSize(job.size, job.size)
+    if (not job.layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+        ns.ItemButtonStyle.Apply(b)
+         b._lunaBagsStyleDirty = true
+    end
+    local col = pos.col
+    local row = pos.row
+    local info = pos.entry
+    local slotParent = self:GetBagSlotParent(info.bagID, self.frame.content)
+    if slotParent and b:GetParent() ~= slotParent then
+        b:SetParent(slotParent)
+    end
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", job.gridInsetX + col * (job.size + job.spacing), -job.gridInsetY - row * (job.size + job.spacing) - (pos.yOffset or 0))
+    if job.layoutOnly then
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
+            ns.ItemButtonStyle.ResetState(b)
+        end
+        b:Show()
+        return
+    end
+
+    local isMatch = ItemMatchesSearch(info.item, self.searchText)
+    local readOnly = job.readOnly
+    b.viewBagID = info.bagID
+    b.viewSlot = info.slot
+    b.bagID = readOnly and nil or info.bagID
+    b.slot = readOnly and nil or info.slot
+    b.BagID = readOnly and nil or info.bagID
+    b.SlotID = readOnly and nil or info.slot
+    b.itemData = info.item
+    b.category = pos.category
+    b.readOnly = readOnly
+    b:SetID(readOnly and 0 or info.slot)
+    if readOnly then
+        b:SetAttribute("type", nil)
+        b:SetAttribute("bag", nil)
+        b:SetAttribute("slot", nil)
+    else
+        b:SetAttribute("type", "item")
+        b:SetAttribute("bag", info.bagID)
+        b:SetAttribute("slot", info.slot)
+    end
+    if b.DebugSlotText and IsDebugEnabled() then
+        b.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
+        b.DebugSlotText:Show()
+    elseif b.DebugSlotText then
+        b.DebugSlotText:Hide()
+    end
+
+    local alpha = info.item and ((job.searching and not isMatch) and 0.22 or 1) or ((job.searching and not isMatch) and 0.18 or 0.55)
+    local renderSignature = GetButtonRenderSignature(info, "oneBank", readOnly, alpha, self.sortingActive, job.pluginSignature)
+    local visualDirty = b._lunaBagsRenderSignature ~= renderSignature
+
+    if visualDirty then
+        if info.item then
+            if SetItemButtonTexture then
+                SetItemButtonTexture(b, info.item.iconFileID)
+            else
+                b.icon:SetTexture(info.item.iconFileID)
+            end
+            if SetItemButtonCount then
+                SetItemButtonCount(b, info.item.stackCount or 0)
+                if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                    ns.ItemButtonStyle.ApplyTextStyle(b)
+                end
+            else
+                b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
+            end
+            if SetItemButtonQuality then
+                SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
+            end
+            if readOnly then
+                ClearItemCooldown(b)
+            else
+                UpdateItemCooldown(b, info.bagID, info.slot)
+            end
+        else
+            if SetItemButtonTexture then
+                SetItemButtonTexture(b, nil)
+            else
+                b.icon:SetTexture(nil)
+            end
+            if SetItemButtonCount then
+                SetItemButtonCount(b, 0)
+                if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                    ns.ItemButtonStyle.ApplyTextStyle(b)
+                end
+            else
+                b.count:SetText("")
+            end
+            if SetItemButtonQuality then
+                SetItemButtonQuality(b, nil)
+            end
+            ClearItemCooldown(b)
+        end
+        b._lunaBagsSortingDesaturated = self.sortingActive == true
+        if b.icon and b.icon.SetDesaturated then
+            b.icon:SetDesaturated(self.sortingActive == true)
+        end
+        b._lunaBagsRenderSignature = renderSignature
+    end
+    local pluginRenderSignature = renderSignature .. ":" .. tostring(job.pluginSignature or "")
+    local pluginDirty = visualDirty or b._lunaBagsStyleDirty == true or b._lunaBagsPluginSignature ~= pluginRenderSignature
+    if pluginDirty then
+        UpdateButtonStyleBorderForItem(b, info.item)
+        if ns.Plugins then
+            ns.Plugins:Apply(b, info, "oneBank")
+        end
+        b._lunaBagsPluginSignature = pluginRenderSignature
+        b._lunaBagsStyleDirty = nil
+    end
+    b:SetAlpha(alpha)
+    b._baseAlpha = alpha
+    b:EnableMouse(readOnly or not self.sortingActive)
+    b:Show()
+end
+
+local function CleanupOneBankButtons(self, used)
+    for i = used + 1, #self.buttons do
+        self.buttons[i]._lunaBagsRenderSignature = nil
+        self.buttons[i]._lunaBagsPluginSignature = nil
+        self.buttons[i]._lunaBagsStyleDirty = nil
+        self.buttons[i].readOnly = nil
+        self.buttons[i].viewBagID = nil
+        self.buttons[i].viewSlot = nil
+        if self.buttons[i].DebugSlotText then
+            self.buttons[i].DebugSlotText:Hide()
+        end
+        self.buttons[i]:Hide()
+    end
+end
+
+local function StartOneBankButtonRenderJob(self, job)
+    StopOneBankButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    job.token = self._buttonRenderToken
+    job.index = 1
+    self._buttonRenderJob = job
+
+    local function process(limit)
+        local processed = 0
+        while job.index <= job.used and processed < limit do
+            RenderOneBankPositionedButton(self, job, job.index)
+            job.index = job.index + 1
+            processed = processed + 1
+        end
+        if job.index > job.used then
+            self._buttonRenderJob = nil
+            if self._buttonRenderFrame then
+                self._buttonRenderFrame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
+    if job.layoutOnly or not CreateFrame then
+        process(job.used)
+        return
+    end
+
+    if not self._buttonRenderFrame then
+        self._buttonRenderFrame = CreateFrame("Frame")
+    end
+    process(math.min(job.used, ONEBANK_BUTTONS_PER_FRAME))
+    if job.index <= job.used then
+        self._buttonRenderFrame:SetScript("OnUpdate", function(frame)
+            if not self._buttonRenderJob or self._buttonRenderJob.token ~= job.token or not self.frame or not self.frame:IsShown() then
+                self._buttonRenderJob = nil
+                frame:SetScript("OnUpdate", nil)
+                return
+            end
+            process(ONEBANK_BUTTONS_PER_FRAME)
+        end)
+    end
+end
+
+local function BuildBankPositionedSlotIndex(positioned)
+    local index = {}
+    for i, p in ipairs(positioned or {}) do
+        local entry = p and p.entry
+        if entry and entry.bagID ~= nil and entry.slot ~= nil then
+            index[GetBankSlotKey(entry.bagID, entry.slot)] = i
+        end
+    end
+    return index
+end
+
+local function HasBankDirtySlot(dirtySlots)
+    if type(dirtySlots) ~= "table" then
+        return false
+    end
+    for _, slots in pairs(dirtySlots) do
+        if slots == true then
+            return true
+        end
+        if type(slots) == "table" then
+            for _ in pairs(slots) do
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function OneBank:CanRefreshItemsOnly()
+    if not self.frame or not self.frame:IsShown() or IsBankViewMode() then
+        return false
+    end
+    if IsVisualSortEnabled() then
+        return false
+    end
+    if ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bank") then
+        return false
+    end
+    return self._lastButtonRenderTemplate and self._lastButtonRenderTemplate.positioned and self._lastButtonRenderTemplate.slotIndex
+end
+
+function OneBank:RefreshItemsOnly(dirtySlots)
+    if not self:CanRefreshItemsOnly() or not HasBankDirtySlot(dirtySlots) then
+        return false
+    end
+
+    local previous = self._lastButtonRenderTemplate
+    local positioned = previous.positioned
+    local slotIndex = previous.slotIndex
+    local changedIndexes = {}
+
+    for rawBagID, slots in pairs(dirtySlots) do
+        local bagID = tonumber(rawBagID) or rawBagID
+        if (bagID == -1 or (type(bagID) == "number" and bagID >= 5 and bagID <= 11)) and (bagID == -1 or self.visibleBags[bagID] ~= false) then
+            if slots == true then
+                local slotCount = GetNumSlotsInBag(bagID)
+                local mappedSlots = 0
+                for slot = 1, slotCount do
+                    if slotIndex[GetBankSlotKey(bagID, slot)] then
+                        mappedSlots = mappedSlots + 1
+                    end
+                end
+                if mappedSlots ~= slotCount then
+                    return false
+                end
+                for slot = 1, slotCount do
+                    local index = slotIndex[GetBankSlotKey(bagID, slot)]
+                    if index and positioned[index] then
+                        positioned[index].entry = BuildCurrentOneBankSlotEntry(bagID, slot)
+                        changedIndexes[#changedIndexes + 1] = index
+                    end
+                end
+            elseif type(slots) == "table" then
+                for rawSlot in pairs(slots) do
+                    local slot = tonumber(rawSlot) or rawSlot
+                    local index = slotIndex[GetBankSlotKey(bagID, slot)]
+                    if index and positioned[index] then
+                        positioned[index].entry = BuildCurrentOneBankSlotEntry(bagID, slot)
+                        changedIndexes[#changedIndexes + 1] = index
+                    end
+                end
+            end
+        end
+    end
+
+    if #changedIndexes == 0 then
+        return false
+    end
+
+    table.sort(changedIndexes)
+    local currentSlots = {}
+    for _, p in ipairs(positioned) do
+        currentSlots[#currentSlots + 1] = p.entry
+    end
+    local occupiedSlots, totalSlots = CountSlotUsage(currentSlots)
+    if self.frame.MoneyBar and self.frame.MoneyBar.Label then
+        self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+    end
+    if self.frame.MoneyBar and self.frame.MoneyBar.Text then
+        self.frame.MoneyBar.Text:SetText(FormatMoneyText(GetMoney and GetMoney() or 0, 14))
+    end
+
+    local job = {
+        positioned = positioned,
+        used = #positioned,
+        size = previous.size,
+        spacing = previous.spacing,
+        gridInsetX = previous.gridInsetX,
+        gridInsetY = previous.gridInsetY,
+        layoutOnly = false,
+        readOnly = false,
+        searching = self.searchText and self.searchText ~= "",
+        pluginSignature = GetPluginRenderSignature(),
+        indexes = changedIndexes,
+    }
+
+    StopOneBankButtonRenderJob(self)
+    self._buttonRenderToken = (self._buttonRenderToken or 0) + 1
+    job.token = self._buttonRenderToken
+    job.index = 1
+    self._buttonRenderJob = job
+
+    local function process(limit)
+        local processed = 0
+        while job.index <= #job.indexes and processed < limit do
+            RenderOneBankPositionedButton(self, job, job.indexes[job.index])
+            job.index = job.index + 1
+            processed = processed + 1
+        end
+        if job.index > #job.indexes then
+            self._buttonRenderJob = nil
+            if self._buttonRenderFrame then
+                self._buttonRenderFrame:SetScript("OnUpdate", nil)
+            end
+        end
+    end
+
+    if not self._buttonRenderFrame then
+        self._buttonRenderFrame = CreateFrame("Frame")
+    end
+    process(math.min(#job.indexes, ONEBANK_BUTTONS_PER_FRAME))
+    if job.index <= #job.indexes then
+        self._buttonRenderFrame:SetScript("OnUpdate", function(frame)
+            if not self._buttonRenderJob or self._buttonRenderJob.token ~= job.token or not self.frame or not self.frame:IsShown() then
+                self._buttonRenderJob = nil
+                frame:SetScript("OnUpdate", nil)
+                return
+            end
+            process(ONEBANK_BUTTONS_PER_FRAME)
+        end)
+    end
+
+    self._slotCacheDirty = true
+    return true
+end
+
 function OneBank:Refresh(layoutOnly)
     if not self.frame then
         return
@@ -2911,132 +3293,30 @@ end
     local maxBottom = 0
     local pluginSignature = GetPluginRenderSignature()
     for i = 1, used do
-        local b = self:AcquireButton(i)
-        b:SetSize(size, size)
-        if (not layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
-            ns.ItemButtonStyle.Apply(b)
-        end
         local pos = positioned[i]
-        local col = pos.col
-        local row = pos.row
-        local info = pos.entry
-        local slotParent = self:GetBagSlotParent(info.bagID, self.frame.content)
-        if slotParent and b:GetParent() ~= slotParent then
-            b:SetParent(slotParent)
-        end
-        b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", gridInsetX + col * (size + spacing), -gridInsetY - row * (size + spacing) - (pos.yOffset or 0))
+        local row = pos.row or 0
         local bottom = gridInsetY + row * (size + spacing) + (pos.yOffset or 0) + size
         if bottom > maxBottom then
             maxBottom = bottom
         end
-        if layoutOnly then
-            if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
-                ns.ItemButtonStyle.ResetState(b)
-            end
-            b:Show()
-        else
-            local isMatch = ItemMatchesSearch(info.item, self.searchText)
-            local readOnly = IsBankViewMode()
-            b.viewBagID = info.bagID
-            b.viewSlot = info.slot
-            b.bagID = readOnly and nil or info.bagID
-            b.slot = readOnly and nil or info.slot
-            b.BagID = readOnly and nil or info.bagID
-            b.SlotID = readOnly and nil or info.slot
-            b.itemData = info.item
-            b.category = pos.category
-            b.readOnly = readOnly
-            b:SetID(readOnly and 0 or info.slot)
-            if readOnly then
-                b:SetAttribute("type", nil)
-                b:SetAttribute("bag", nil)
-                b:SetAttribute("slot", nil)
-            else
-                b:SetAttribute("type", "item")
-                b:SetAttribute("bag", info.bagID)
-                b:SetAttribute("slot", info.slot)
-            end
-            if b.DebugSlotText and IsDebugEnabled() then
-                b.DebugSlotText:SetText(("%d:%d"):format(tonumber(info.bagID) or -99, tonumber(info.slot) or -99))
-                b.DebugSlotText:Show()
-            elseif b.DebugSlotText then
-                b.DebugSlotText:Hide()
-            end
-
-            local alpha = info.item and ((searching and not isMatch) and 0.22 or 1) or ((searching and not isMatch) and 0.18 or 0.55)
-            local renderSignature = GetButtonRenderSignature(info, "oneBank", readOnly, alpha, self.sortingActive, pluginSignature)
-            local visualDirty = b._lunaBagsRenderSignature ~= renderSignature
-
-            if visualDirty then
-                if info.item then
-                    if SetItemButtonTexture then
-                        SetItemButtonTexture(b, info.item.iconFileID)
-                    else
-                        b.icon:SetTexture(info.item.iconFileID)
-                    end
-                    if SetItemButtonCount then
-                        SetItemButtonCount(b, info.item.stackCount or 0)
-                        if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                            ns.ItemButtonStyle.ApplyTextStyle(b)
-                        end
-                    else
-                        b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
-                    end
-                    if SetItemButtonQuality then
-                        SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
-                    end
-                    if readOnly then
-                        ClearItemCooldown(b)
-                    else
-                        UpdateItemCooldown(b, info.bagID, info.slot)
-                    end
-                    UpdateButtonStyleBorderForItem(b, info.item)
-                else
-                    if SetItemButtonTexture then
-                        SetItemButtonTexture(b, nil)
-                    else
-                        b.icon:SetTexture(nil)
-                    end
-                    if SetItemButtonCount then
-                        SetItemButtonCount(b, 0)
-                        if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                            ns.ItemButtonStyle.ApplyTextStyle(b)
-                        end
-                    else
-                        b.count:SetText("")
-                    end
-                    if SetItemButtonQuality then
-                        SetItemButtonQuality(b, nil)
-                    end
-                    ClearItemCooldown(b)
-                    UpdateButtonStyleBorderForItem(b, nil)
-                end
-                b._lunaBagsSortingDesaturated = self.sortingActive == true
-                if b.icon and b.icon.SetDesaturated then
-                    b.icon:SetDesaturated(self.sortingActive == true)
-                end
-                if ns.Plugins then
-                    ns.Plugins:Apply(b, info, "oneBank")
-                end
-                b._lunaBagsRenderSignature = renderSignature
-            end
-            b:SetAlpha(alpha)
-            b._baseAlpha = alpha
-            b:EnableMouse(readOnly or not self.sortingActive)
-            b:Show()
-        end
     end
-    for i = used + 1, #self.buttons do
-        self.buttons[i]._lunaBagsRenderSignature = nil
-        self.buttons[i].readOnly = nil
-        self.buttons[i].viewBagID = nil
-        self.buttons[i].viewSlot = nil
-        if self.buttons[i].DebugSlotText then
-            self.buttons[i].DebugSlotText:Hide()
-        end
-        self.buttons[i]:Hide()
-    end
+    CleanupOneBankButtons(self, used)
+    local renderJob = {
+        positioned = positioned,
+        used = used,
+        size = size,
+        spacing = spacing,
+        gridInsetX = gridInsetX,
+        gridInsetY = gridInsetY,
+        layoutOnly = layoutOnly,
+        readOnly = IsBankViewMode(),
+        searching = searching,
+        pluginSignature = pluginSignature,
+        allSlots = all,
+        slotIndex = BuildBankPositionedSlotIndex(positioned),
+    }
+    self._lastButtonRenderTemplate = renderJob
+    StartOneBankButtonRenderJob(self, renderJob)
 
     local placeholders = self.frame.content and self.frame.content.BankCategoryPlaceholders or {}
     for i, placeholder in ipairs(sectionPlaceholders) do

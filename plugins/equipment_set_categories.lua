@@ -571,6 +571,26 @@ function Plugin:Matches(item, category)
     if not item or not category then
         return false
     end
+    local itemKey = item.itemLink or item.itemID
+    local categoryKey = category.id or category.name
+    if itemKey and categoryKey then
+        local fingerprint = self:GetFingerprint()
+        self._matchCache = self._matchCache or {}
+        local cacheKey = table.concat({ tostring(fingerprint), tostring(categoryKey), tostring(itemKey) }, "|")
+        local cached = self._matchCache[cacheKey]
+        if cached ~= nil then
+            return cached == true
+        end
+        local itemLink = NormalizeItemLink(item.itemLink)
+        local itemID = tonumber(item.itemID)
+        local itemRackID = item and item.itemLink and GetItemRackID(item.itemLink)
+        local matched = (itemRackID and category._equipmentSetItemRackIDs and category._equipmentSetItemRackIDs[itemRackID])
+            or (itemLink and category._equipmentSetItemLinks and category._equipmentSetItemLinks[itemLink])
+            or (itemID and category._equipmentSetItemIDs and category._equipmentSetItemIDs[itemID] == true)
+        self._matchCache[cacheKey] = matched == true
+        return matched == true
+    end
+
     local itemLink = NormalizeItemLink(item.itemLink)
     local itemID = tonumber(item.itemID)
     local itemRackID = item and item.itemLink and GetItemRackID(item.itemLink)
@@ -658,6 +678,10 @@ end
 
 local function RefreshOpenWindows()
     Plugin._categoryCache = nil
+    Plugin._matchCache = nil
+    if addon.Categories and addon.Categories.InvalidateMatchCache then
+        addon.Categories:InvalidateMatchCache()
+    end
     if addon.OneBag then
         addon.OneBag._layoutModel = nil
         if addon.OneBag.InvalidateSlotCache then
