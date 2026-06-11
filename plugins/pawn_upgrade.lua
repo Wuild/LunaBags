@@ -167,6 +167,10 @@ function Plugin:Apply(button, entry, context, enabled)
     SetUpgradeIconShown(button, isUpgrade)
 end
 
+function Plugin:GetRenderSignature()
+    return refreshCounter
+end
+
 function Plugin:GetOptions(api)
     return {
         type = "group",

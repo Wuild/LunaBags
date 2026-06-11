@@ -1136,6 +1136,67 @@ local function UpdateItemCooldown(button, bagID, slot)
     end
 end
 
+local function GetItemCooldownSignature(bagID, slot)
+    if not bagID or not slot then
+        return ""
+    end
+    local start, duration, enable
+    if C_Container and C_Container.GetContainerItemCooldown then
+        start, duration, enable = C_Container.GetContainerItemCooldown(bagID, slot)
+    else
+        start, duration, enable = GetContainerItemCooldown(bagID, slot)
+    end
+    return tostring(start or 0) .. "," .. tostring(duration or 0) .. "," .. tostring(enable or 0)
+end
+
+local function GetPluginRenderSignature()
+    local addon = ns.LunaBags
+    local cfg = addon and addon.db and addon.db.profile and addon.db.profile.plugins
+    local parts = {}
+    if type(cfg) == "table" then
+        for key, value in pairs(cfg) do
+            if type(value) == "table" then
+                local nested = {}
+                for optionKey, optionValue in pairs(value) do
+                    nested[#nested + 1] = tostring(optionKey) .. "=" .. tostring(optionValue)
+                end
+                table.sort(nested)
+                parts[#parts + 1] = tostring(key) .. "={" .. table.concat(nested, ",") .. "}"
+            else
+                parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+            end
+        end
+    end
+    if ns.Plugins and type(ns.Plugins.registry) == "table" then
+        for id, plugin in pairs(ns.Plugins.registry) do
+            if type(plugin) == "table" and type(plugin.GetRenderSignature) == "function" then
+                parts[#parts + 1] = tostring(id) .. ":" .. tostring(plugin:GetRenderSignature())
+            end
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, ";")
+end
+
+local function GetButtonRenderSignature(info, context, readOnly, alpha, sortingActive, pluginSignature)
+    local item = info and info.item
+    local cooldownSignature = item and not readOnly and GetItemCooldownSignature(info.bagID, info.slot) or ""
+    return table.concat({
+        tostring(context or ""),
+        tostring(info and info.bagID or ""),
+        tostring(info and info.slot or ""),
+        tostring(readOnly == true),
+        tostring(alpha or ""),
+        tostring(sortingActive == true),
+        tostring(item and item.iconFileID or ""),
+        tostring(item and item.stackCount or ""),
+        tostring(item and item.quality or ""),
+        tostring(item and item.itemLink or item and item.itemID or ""),
+        cooldownSignature,
+        tostring(pluginSignature or ""),
+    }, "|")
+end
+
 local function ItemMatchesSearch(item, searchText)
     if searchText == "" then
         return true
@@ -2848,6 +2909,7 @@ end
 
     local used = #positioned
     local maxBottom = 0
+    local pluginSignature = GetPluginRenderSignature()
     for i = 1, used do
         local b = self:AcquireButton(i)
         b:SetSize(size, size)
@@ -2902,67 +2964,71 @@ end
                 b.DebugSlotText:Hide()
             end
 
-            if info.item then
-                if SetItemButtonTexture then
-                    SetItemButtonTexture(b, info.item.iconFileID)
-                else
-                    b.icon:SetTexture(info.item.iconFileID)
-                end
-                if SetItemButtonCount then
-                    SetItemButtonCount(b, info.item.stackCount or 0)
-                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                        ns.ItemButtonStyle.ApplyTextStyle(b)
+            local alpha = info.item and ((searching and not isMatch) and 0.22 or 1) or ((searching and not isMatch) and 0.18 or 0.55)
+            local renderSignature = GetButtonRenderSignature(info, "oneBank", readOnly, alpha, self.sortingActive, pluginSignature)
+            local visualDirty = b._lunaBagsRenderSignature ~= renderSignature
+
+            if visualDirty then
+                if info.item then
+                    if SetItemButtonTexture then
+                        SetItemButtonTexture(b, info.item.iconFileID)
+                    else
+                        b.icon:SetTexture(info.item.iconFileID)
                     end
+                    if SetItemButtonCount then
+                        SetItemButtonCount(b, info.item.stackCount or 0)
+                        if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                            ns.ItemButtonStyle.ApplyTextStyle(b)
+                        end
+                    else
+                        b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
+                    end
+                    if SetItemButtonQuality then
+                        SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
+                    end
+                    if readOnly then
+                        ClearItemCooldown(b)
+                    else
+                        UpdateItemCooldown(b, info.bagID, info.slot)
+                    end
+                    UpdateButtonStyleBorderForItem(b, info.item)
                 else
-                    b.count:SetText((info.item.stackCount or 0) > 1 and info.item.stackCount or "")
-                end
-                if SetItemButtonQuality then
-                    SetItemButtonQuality(b, info.item.quality, info.item.itemLink)
-                end
-                if readOnly then
+                    if SetItemButtonTexture then
+                        SetItemButtonTexture(b, nil)
+                    else
+                        b.icon:SetTexture(nil)
+                    end
+                    if SetItemButtonCount then
+                        SetItemButtonCount(b, 0)
+                        if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
+                            ns.ItemButtonStyle.ApplyTextStyle(b)
+                        end
+                    else
+                        b.count:SetText("")
+                    end
+                    if SetItemButtonQuality then
+                        SetItemButtonQuality(b, nil)
+                    end
                     ClearItemCooldown(b)
-                else
-                    UpdateItemCooldown(b, info.bagID, info.slot)
+                    UpdateButtonStyleBorderForItem(b, nil)
                 end
-                local alpha = (searching and not isMatch) and 0.22 or 1
-                b:SetAlpha(alpha)
-                b._baseAlpha = alpha
-                UpdateButtonStyleBorderForItem(b, info.item)
-            else
-                if SetItemButtonTexture then
-                    SetItemButtonTexture(b, nil)
-                else
-                    b.icon:SetTexture(nil)
+                b._lunaBagsSortingDesaturated = self.sortingActive == true
+                if b.icon and b.icon.SetDesaturated then
+                    b.icon:SetDesaturated(self.sortingActive == true)
                 end
-                if SetItemButtonCount then
-                    SetItemButtonCount(b, 0)
-                    if ns.ItemButtonStyle and ns.ItemButtonStyle.ApplyTextStyle then
-                        ns.ItemButtonStyle.ApplyTextStyle(b)
-                    end
-                else
-                    b.count:SetText("")
+                if ns.Plugins then
+                    ns.Plugins:Apply(b, info, "oneBank")
                 end
-                if SetItemButtonQuality then
-                    SetItemButtonQuality(b, nil)
-                end
-                ClearItemCooldown(b)
-                local alpha = (searching and not isMatch) and 0.18 or 0.55
-                b:SetAlpha(alpha)
-                b._baseAlpha = alpha
-                UpdateButtonStyleBorderForItem(b, nil)
+                b._lunaBagsRenderSignature = renderSignature
             end
-            b._lunaBagsSortingDesaturated = self.sortingActive == true
-            if b.icon and b.icon.SetDesaturated then
-                b.icon:SetDesaturated(self.sortingActive == true)
-            end
-            if ns.Plugins then
-                ns.Plugins:Apply(b, info, "oneBank")
-            end
+            b:SetAlpha(alpha)
+            b._baseAlpha = alpha
             b:EnableMouse(readOnly or not self.sortingActive)
             b:Show()
         end
     end
     for i = used + 1, #self.buttons do
+        self.buttons[i]._lunaBagsRenderSignature = nil
         self.buttons[i].readOnly = nil
         self.buttons[i].viewBagID = nil
         self.buttons[i].viewSlot = nil
@@ -3390,9 +3456,27 @@ function LunaBagsOneBank_SearchToggleClicked()
 end
 
 function LunaBagsOneBank_SortClicked()
-    if IsBankViewMode() or IsVisualSortEnabled() then
+    if IsBankViewMode() then
         OneBank:InvalidateSlotCache()
         OneBank:Refresh()
+        return
+    end
+    if IsVisualSortEnabled() then
+        if ns.Sorter and ns.Sorter.RestackSpecificBags then
+            ns.Sorter:RestackSpecificBags(BANK_BAGS, {
+                onStart = function()
+                    OneBank:SetSortingState(true)
+                end,
+                onStop = function()
+                    OneBank:SetSortingState(false)
+                    OneBank:InvalidateSlotCache()
+                    OneBank:Refresh()
+                end,
+            })
+        else
+            OneBank:InvalidateSlotCache()
+            OneBank:Refresh()
+        end
         return
     end
     if SortBankBags then

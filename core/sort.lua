@@ -10,13 +10,14 @@ Sorter.idleTicks = 0
 Sorter.lastRefresh = 0
 Sorter.lastMoveFrom = nil
 Sorter.lastMoveTo = nil
+Sorter.mode = "sort"
 
 ns.Sorter = Sorter
 
 local ticker = CreateFrame("Frame")
 local elapsed = 0
-local STEP_INTERVAL = 0
-local MAX_STEPS_PER_TICK = 3
+local STEP_INTERVAL = 0.04
+local MAX_STEPS_PER_TICK = 1
 local MAX_IDLE_TICKS = 120
 local REFRESH_INTERVAL = 0.08
 local MOVE_SETTLE_DELAY = 0.12
@@ -322,21 +323,68 @@ local function IsMountItem(item)
     return tostring(item.subTypeName or ""):lower():find("mount", 1, true) ~= nil
 end
 
+local function GetCachedSortItemInfo(itemKey, itemID)
+    if not itemKey or itemKey == "" then
+        return nil
+    end
+
+    local cache = Sorter.itemInfoCache
+    if not cache then
+        cache = {}
+        Sorter.itemInfoCache = cache
+    end
+
+    local cached = cache[itemKey]
+    if cached then
+        return cached
+    end
+
+    local name, _, quality, itemLevel, _, itemTypeName, subTypeName, maxStack, equipLoc, _, sellPrice, classID, subClassID
+    if GetItemInfo then
+        name, _, quality, itemLevel, _, itemTypeName, subTypeName, maxStack, equipLoc, _, sellPrice, classID, subClassID = GetItemInfo(itemKey)
+    end
+
+    local itemFamily = 0
+    if itemID and itemID > 0 and GetItemFamily then
+        itemFamily = GetItemFamily(itemKey) or 0
+    end
+
+    cached = {
+        name = name,
+        quality = quality,
+        itemLevel = itemLevel,
+        itemTypeName = itemTypeName,
+        subTypeName = subTypeName,
+        maxStack = maxStack,
+        equipLoc = equipLoc,
+        sellPrice = sellPrice,
+        classID = classID,
+        subClassID = subClassID,
+        itemFamily = itemFamily,
+    }
+    cache[itemKey] = cached
+    return cached
+end
+
 local function BuildSlotData(bagID, slot, bagFamilyMask, bagSpecialtyClass, priorities)
     local info = GetContainerInfo(bagID, slot)
     local link = info and GetContainerLink(bagID, slot) or nil
     local itemID = (info and info.itemID) or (link and tonumber(link:match("item:(%d+)"))) or 0
     local itemKey = link or (itemID > 0 and itemID) or ""
-    local name, _, quality, itemLevel, _, itemTypeName, subTypeName, maxStack, equipLoc, _, sellPrice, classID, subClassID
-    if itemID > 0 or link then
-        name, _, quality, itemLevel, _, itemTypeName, subTypeName, maxStack, equipLoc, _, sellPrice, classID, subClassID = GetItemInfo(itemKey)
-    end
+    local itemDetails = (itemID > 0 or link) and GetCachedSortItemInfo(itemKey, itemID) or nil
+    local name = itemDetails and itemDetails.name
+    local quality = itemDetails and itemDetails.quality
+    local itemLevel = itemDetails and itemDetails.itemLevel
+    local itemTypeName = itemDetails and itemDetails.itemTypeName
+    local subTypeName = itemDetails and itemDetails.subTypeName
+    local maxStack = itemDetails and itemDetails.maxStack
+    local equipLoc = itemDetails and itemDetails.equipLoc
+    local sellPrice = itemDetails and itemDetails.sellPrice
+    local classID = itemDetails and itemDetails.classID
+    local subClassID = itemDetails and itemDetails.subClassID
     quality = GetQualityFromLink(link) or quality or (info and info.quality)
 
-    local itemFamily = 0
-    if itemID > 0 and GetItemFamily then
-        itemFamily = GetItemFamily(itemKey) or 0
-    end
+    local itemFamily = itemDetails and itemDetails.itemFamily or 0
 
     local data = {
         bag = bagID,
@@ -603,6 +651,53 @@ local function CanSwapSpaces(a, b)
         and CanItemFitSpace(b.item, a)
 end
 
+local function CanRestackInto(source, target)
+    if not source or not target or source == target then return false end
+    if source.index and target.index and source.index <= target.index then return false end
+    if source.locked or target.locked then return false end
+    if source.item.empty or target.item.empty then return false end
+    if source.item.runtimeLocked or target.item.runtimeLocked then return false end
+    if source.item.itemKey ~= target.item.itemKey then return false end
+    local maxStack = math.max(tonumber(source.item.maxStack) or 1, tonumber(target.item.maxStack) or 1)
+    if maxStack <= 1 then return false end
+    if (target.item.count or 0) >= maxStack then return false end
+    if (source.item.count or 0) >= maxStack then return false end
+    if (source.item.count or 0) <= 0 then return false end
+    return CanItemFitSpace(source.item, target)
+end
+
+local function FindRestackMove(spaces)
+    local waitingOnLocked = false
+
+    for _, target in ipairs(spaces) do
+        if target.item and not target.item.empty then
+            local maxStack = tonumber(target.item.maxStack) or 1
+            if maxStack > 1 and (target.item.count or 0) < maxStack and not target.locked then
+                for i = #spaces, 1, -1 do
+                    local source = spaces[i]
+                    local sourceMaxStack = source and source.item and tonumber(source.item.maxStack) or 1
+                    if source ~= target
+                        and source.index > target.index
+                        and source.item
+                        and not source.item.empty
+                        and source.item.itemKey == target.item.itemKey
+                        and (source.item.count or 0) < sourceMaxStack
+                        and not source.locked
+                    then
+                        if CanRestackInto(source, target) then
+                            return source, target, false
+                        elseif source.item.runtimeLocked or target.item.runtimeLocked then
+                            waitingOnLocked = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil, waitingOnLocked
+end
+
 local function FindSourceForTarget(spaces, target)
     local best, bestRank
     for _, source in ipairs(spaces) do
@@ -748,6 +843,18 @@ end
 function Sorter:StepOnce()
     local spaces = BuildSpaces(self.bags)
     if #spaces < 2 then return "done" end
+
+    local restackSource, restackTarget, waitingOnRestack = FindRestackMove(spaces)
+    if restackSource and restackTarget then
+        if self:MoveItem(restackSource, restackTarget) then
+            return "moved"
+        end
+        return "pending"
+    end
+    if self.mode == "restack" then
+        return waitingOnRestack and "pending" or "done"
+    end
+
     if not AssignDesiredLayout(spaces) then return "pending" end
 
     for _, target in ipairs(spaces) do
@@ -859,6 +966,7 @@ function Sorter:Start()
     self.lastMoveFrom = nil
     self.lastMoveTo = nil
     self.waitUntil = nil
+    self.itemInfoCache = {}
     if ns and ns.LunaBags and ns.LunaBags.BeginSortSession then ns.LunaBags:BeginSortSession() end
     if self._onStart then self._onStart() elseif ns.OneBag and ns.OneBag.SetSortingState then ns.OneBag:SetSortingState(true) end
 end
@@ -870,13 +978,25 @@ function Sorter:Stop()
     self._onStart = nil
     self._onStop = nil
     self.waitUntil = nil
+    self.itemInfoCache = nil
 end
 
 function Sorter:SortBags()
     if self.running then self:Stop() end
     self.bags = { 0, 1, 2, 3, 4 }
+    self.mode = "sort"
     self._onStart = nil
     self._onStop = nil
+    self:Start()
+end
+
+function Sorter:RestackBags(callbacks)
+    if self.running then self:Stop() end
+    self.bags = { 0, 1, 2, 3, 4 }
+    self.mode = "restack"
+    callbacks = callbacks or {}
+    self._onStart = callbacks.onStart
+    self._onStop = callbacks.onStop
     self:Start()
 end
 
@@ -890,6 +1010,24 @@ function Sorter:SortSpecificBags(bagList, callbacks)
     end
     if #self.bags == 0 then return end
 
+    self.mode = "sort"
+    callbacks = callbacks or {}
+    self._onStart = callbacks.onStart
+    self._onStop = callbacks.onStop
+    self:Start()
+end
+
+function Sorter:RestackSpecificBags(bagList, callbacks)
+    if type(bagList) ~= "table" or #bagList == 0 then return end
+    if self.running then self:Stop() end
+    self.bags = {}
+    for i = 1, #bagList do
+        local bagID = tonumber(bagList[i])
+        if bagID then self.bags[#self.bags + 1] = bagID end
+    end
+    if #self.bags == 0 then return end
+
+    self.mode = "restack"
     callbacks = callbacks or {}
     self._onStart = callbacks.onStart
     self._onStop = callbacks.onStop
