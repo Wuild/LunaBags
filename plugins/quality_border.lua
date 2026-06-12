@@ -29,8 +29,6 @@ local function ResolveQualityBorderColor(quality)
 end
 
 local function IsQuestItem(item)
-    -- Item class "Quest" includes repeatable turn-in items such as Mark of Sargeras.
-    -- Only Blizzard's per-slot quest flag should trigger the quest border.
     return item and item.isQuestItem == true
 end
 
@@ -60,7 +58,6 @@ function Plugin:Apply(button, entry, _, enabled)
     local r, g, b, a = ResolveQualityBorderColor(quality)
 
     if isQuestItem then
-        -- Blizzard quest yellow
         r, g, b, a = 1, 0.82, 0, 1
     elseif enabled and addon.Plugins and addon.Plugins:IsEnabled("equipmentSetBorder") and IsEquipmentSetItem(item) then
         r, g, b, a = 0.20, 0.72, 1.0, 1

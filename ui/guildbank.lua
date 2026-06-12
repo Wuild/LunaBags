@@ -66,7 +66,6 @@ local function SetBlizzardGuildBankSuppressed(suppressed)
         frame:EnableMouse(true)
     end
 
-    -- Some clients still allow child item buttons to capture mouse even when parent is hidden/alpha'd.
     for column = 1, BLIZZARD_GUILDBANK_COLUMNS do
         local columnFrame = frame.Columns and frame.Columns[column]
         if columnFrame and columnFrame.Buttons then
@@ -1274,7 +1273,6 @@ function OneGuildBank:RefreshIfShown()
 end
 
 function OneGuildBank:InvalidateSlotCache()
-    -- Guild bank refresh is API-driven; keep this for parity with other modules.
 end
 
 function OneGuildBank:Show()

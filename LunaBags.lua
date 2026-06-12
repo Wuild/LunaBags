@@ -1,6 +1,5 @@
 local ADDON_NAME, ns = ...
 
----@class LunaBagsAddon : AceAddon-3.0, AceConsole-3.0, AceEvent-3.0
 local LunaBags = LibStub("AceAddon-3.0"):NewAddon(ADDON_NAME, "AceConsole-3.0", "AceEvent-3.0")
 _G.LunaBags = LunaBags
 ns.LunaBags = LunaBags

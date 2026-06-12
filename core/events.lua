@@ -77,6 +77,9 @@ end
 
 function LunaBags:ITEM_LOCK_CHANGED(_, bagID, slot)
     self:MarkDirtyBagSlot(bagID, slot)
+    if bagID ~= nil and slot ~= nil then
+        self:RefreshDirtyOpenWindows({ [bagID] = { [slot] = true } })
+    end
 end
 
 function LunaBags:RefreshOpenWindowCooldowns()
@@ -115,7 +118,6 @@ function LunaBags:RefreshDirtyOpenWindows(dirtySlots)
     if addon.OneBag and addon.OneBag.frame and addon.OneBag.frame:IsShown() then
         anyVisible = true
         if addon.OneBag.RefreshItemsOnly and addon.OneBag:RefreshItemsOnly(dirtySlots) then
-            -- handled
         else
             if addon.OneBag.InvalidateSlotCache then
                 addon.OneBag:InvalidateSlotCache()
@@ -129,7 +131,6 @@ function LunaBags:RefreshDirtyOpenWindows(dirtySlots)
     if addon.OneBank and addon.OneBank.frame and addon.OneBank.frame:IsShown() then
         anyVisible = true
         if addon.OneBank.RefreshItemsOnly and addon.OneBank:RefreshItemsOnly(dirtySlots) then
-            -- handled
         else
             if addon.OneBank.InvalidateSlotCache then
                 addon.OneBank:InvalidateSlotCache()
@@ -190,7 +191,6 @@ function LunaBags:ADDON_LOADED(addonName)
         return
     end
     self:UpdateCurrentCharacterCacheDeferred(false, false)
-    -- Intentionally avoid destructive BankFrame suppression hooks.
 end
 
 local function GetPlayerBagCapacity()
@@ -237,12 +237,10 @@ end
 function LunaBags:BeginSortSession()
     self._sortSessionActive = true
     self._sortDeferredBagUpdate = false
-    self._sortLastLiveRefresh = nil
 end
 
 function LunaBags:EndSortSession()
     self._sortSessionActive = false
-    self._sortLastLiveRefresh = nil
     if self._sortDeferredBagUpdate then
         self._sortDeferredBagUpdate = false
         self:BAG_UPDATE_DELAYED()
@@ -251,30 +249,10 @@ end
 
 function LunaBags:BAG_UPDATE_DELAYED()
     if self._sortSessionActive then
-        if addon.OneBag and addon.OneBag.InvalidateSlotCache then
-            addon.OneBag:InvalidateSlotCache()
-        end
-        if addon.OneBank and addon.OneBank.InvalidateSlotCache then
-            addon.OneBank:InvalidateSlotCache()
-        end
         self._sortDeferredBagUpdate = true
-        local now = GetTime and GetTime() or 0
-        if not self._sortLastLiveRefresh or now == 0 or (now - self._sortLastLiveRefresh) >= 0.08 then
-            self._sortLastLiveRefresh = now
-            if addon.OneBag and addon.OneBag.frame and addon.OneBag.frame:IsShown() then
-                addon.OneBag:Refresh()
-            end
-            if addon.OneBank and addon.OneBank.frame and addon.OneBank.frame:IsShown() then
-                addon.OneBank:Refresh()
-            end
-            if addon.OneGuildBank and addon.OneGuildBank.frame and addon.OneGuildBank.frame:IsShown() then
-                addon.OneGuildBank:Refresh()
-            end
-        end
         return
     end
 
-    -- Coalesce rapid bag updates (loot spam / auto-loot bursts).
     local now = GetTime and GetTime() or 0
     if not self._lastBagUpdateAt then
         self._lastBagUpdateAt = 0

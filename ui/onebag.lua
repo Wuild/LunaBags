@@ -1361,33 +1361,16 @@ local function ToggleSlotLockFromButton(button)
 end
 
 local function ConfigureSecureBagItemButton(button, bagID, slot, enabled)
-    if not button or not button.SetAttribute then
+    if not button then
         return false
     end
 
-    -- Secure attributes are required for Classic's protected item-use path.
-    -- Do not mutate protected button attributes in combat; keep the last safe
-    -- mapping and let the normal refresh update it once combat ends.
-    if InCombatLockdown and InCombatLockdown() then
-        if not enabled then
-            return false
-        end
-        return button:GetAttribute("type") == "item"
-            and button:GetAttribute("bag") == bagID
-            and button:GetAttribute("slot") == slot
-    end
-
-    if enabled and bagID ~= nil and slot ~= nil then
-        button:SetAttribute("type", "item")
-        button:SetAttribute("bag", bagID)
-        button:SetAttribute("slot", slot)
-        return true
-    else
+    if button.SetAttribute and not (InCombatLockdown and InCombatLockdown()) then
         button:SetAttribute("type", nil)
         button:SetAttribute("bag", nil)
         button:SetAttribute("slot", nil)
-        return false
     end
+    return enabled == true and bagID ~= nil and slot ~= nil
 end
 
 local function EnsureLockedCross(button)
@@ -1685,7 +1668,7 @@ local function GetPluginRenderSignature()
     return table.concat(parts, ";")
 end
 
-local function GetButtonRenderSignature(info, context, readOnly, alpha, sortingActive, pluginSignature)
+local function GetButtonRenderSignature(info, context, readOnly, alpha, pluginSignature)
     local item = info and info.item
     local cooldownSignature = item and not readOnly and GetItemCooldownSignature(info.bagID, info.slot) or ""
     return table.concat({
@@ -1695,9 +1678,9 @@ local function GetButtonRenderSignature(info, context, readOnly, alpha, sortingA
         tostring(info and info.virtualEmpty == true),
         tostring(readOnly == true),
         tostring(alpha or ""),
-        tostring(sortingActive == true),
         tostring(item and item.iconFileID or ""),
         tostring(item and item.stackCount or ""),
+        tostring(item and item.isLocked == true),
         tostring(item and item.quality or ""),
         tostring(item and item.itemLink or item and item.itemID or ""),
         cooldownSignature,
@@ -2336,7 +2319,10 @@ function OneBag:SetSortingState(active)
     for _, button in ipairs(self.buttons or {}) do
         if button then
             button:EnableMouse(not disable)
-            if button.icon and button.icon.SetDesaturated then
+            button._lunaBagsSortingDesaturated = disable
+            if SetItemButtonDesaturated then
+                SetItemButtonDesaturated(button, disable)
+            elseif button.icon and button.icon.SetDesaturated then
                 button.icon:SetDesaturated(disable)
             end
         end
@@ -2646,8 +2632,6 @@ function OneBag:AcquireButton(index)
     btn:HookScript("OnDragStart", function(button)
         TrackCategoryDragFromButton(OneBag, button)
     end)
-    -- Preserve Blizzard secure item-button behavior from template scripts.
-
     local icon = btn.icon or _G[btn:GetName() .. "IconTexture"] or _G[btn:GetName() .. "Icon"]
     if not icon then
         icon = btn:CreateTexture(nil, "ARTWORK")
@@ -3083,7 +3067,9 @@ function OneBag:BuildLiveSlots()
                     item = itemInfo and {
                         iconFileID = itemInfo.iconFileID,
                         stackCount = itemInfo.stackCount,
+                        isLocked = itemInfo.isLocked,
                         quality = itemInfo.quality or itemQuality,
+                        isReadable = itemInfo.isReadable,
                         isQuestItem = viewingCurrent and GetQuestItemFlag(bagID, slot, itemInfo) or itemInfo.isQuestItem == true,
                         itemLink = itemLink,
                         itemID = itemID,
@@ -3185,7 +3171,9 @@ local function BuildCurrentOneBagSlotEntry(bagID, slot)
         item = itemInfo and {
             iconFileID = itemInfo.iconFileID,
             stackCount = itemInfo.stackCount,
+            isLocked = itemInfo.isLocked,
             quality = itemInfo.quality or itemQuality,
+            isReadable = itemInfo.isReadable,
             isQuestItem = GetQuestItemFlag(bagID, slot, itemInfo),
             itemLink = itemLink,
             itemID = itemID,
@@ -3312,31 +3300,7 @@ local function StopOneBagButtonRenderJob(self)
     end
 end
 
-local function RenderOneBagPositionedButton(self, job, i)
-    local p = job.positioned[i]
-    if not p then
-        return
-    end
-
-    local button = job.usingReadonlyButtons and self:AcquireReadonlyButton(i) or self:AcquireButton(i)
-    button:SetSize(job.size, job.size)
-    if (not job.layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
-        ns.ItemButtonStyle.Apply(button)
-        button._lunaBagsStyleDirty = true
-    end
-    local col = p.col
-    local row = p.row
-    local extraY = p.yOffset or 0
-    button:ClearAllPoints()
-    button:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", job.gridInsetX + col * (job.size + job.spacing), -job.gridInsetY - row * (job.size + job.spacing) - extraY)
-    if job.layoutOnly then
-        if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
-            ns.ItemButtonStyle.ResetState(button)
-        end
-        button:Show()
-        return
-    end
-
+local function RefreshOneBagButtonState(self, button, p, job)
     local info = p.entry
     local isMatch = ItemMatchesSearch(info.item, self.searchText)
     local slotParent = self:GetBagSlotParent(info.bagID, self.frame.content)
@@ -3350,6 +3314,8 @@ local function RenderOneBagPositionedButton(self, job, i)
     button.itemData = info.item
     button.category = p.category
     button.virtualEmpty = info.virtualEmpty == true
+    button.hasItem = info.item ~= nil
+    button.readable = info.item and info.item.isReadable or nil
     button:SetID(info.slot)
     local secureClickReady = job.usingReadonlyButtons or ConfigureSecureBagItemButton(button, info.bagID, info.slot, not button.virtualEmpty and not job.readOnly)
     if button.DebugSlotText and IsDebugEnabled() then
@@ -3361,7 +3327,7 @@ local function RenderOneBagPositionedButton(self, job, i)
 
     local alpha = info.item and ((job.searching and not isMatch) and 0.22 or 1) or ((job.searching and not isMatch) and 0.18 or 0.55)
     if self.lockSlotsMode then alpha = 1 end
-    local renderSignature = GetButtonRenderSignature(info, "oneBag", job.readOnly, alpha, self.sortingActive, job.pluginSignature)
+    local renderSignature = GetButtonRenderSignature(info, "oneBag", job.readOnly, alpha, job.pluginSignature)
     local visualDirty = button._lunaBagsRenderSignature ~= renderSignature
 
     if visualDirty then
@@ -3410,8 +3376,10 @@ local function RenderOneBagPositionedButton(self, job, i)
             ClearItemCooldown(button)
         end
         button._lunaBagsSortingDesaturated = self.sortingActive == true
-        if button.icon and button.icon.SetDesaturated then
-            button.icon:SetDesaturated(self.sortingActive == true)
+        if (not job.usingReadonlyButtons) and SetItemButtonDesaturated then
+            SetItemButtonDesaturated(button, self.sortingActive == true or (info.item and info.item.isLocked == true))
+        elseif button.icon and button.icon.SetDesaturated then
+            button.icon:SetDesaturated(self.sortingActive == true or (info.item and info.item.isLocked == true))
         end
         button._lunaBagsRenderSignature = renderSignature
     end
@@ -3447,6 +3415,49 @@ local function RenderOneBagPositionedButton(self, job, i)
         end
     end
     button:Show()
+end
+
+local function RefreshOneBagPositionedButtonStateOnly(self, job, positionedIndex)
+    local p = job.positioned[positionedIndex]
+    if not p then
+        return false
+    end
+    local buttonIndex = tonumber(p.buttonIndex) or positionedIndex
+    local button = job.usingReadonlyButtons and self.readonlyButtons[buttonIndex] or self.buttons[buttonIndex]
+    if not button or not button:IsShown() then
+        return false
+    end
+    RefreshOneBagButtonState(self, button, p, job)
+    return true
+end
+
+local function RenderOneBagPositionedButton(self, job, i)
+    local p = job.positioned[i]
+    if not p then
+        return
+    end
+
+    local buttonIndex = tonumber(p.buttonIndex) or i
+    local button = job.usingReadonlyButtons and self:AcquireReadonlyButton(buttonIndex) or self:AcquireButton(buttonIndex)
+    button:SetSize(job.size, job.size)
+    if (not job.layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
+        ns.ItemButtonStyle.Apply(button)
+        button._lunaBagsStyleDirty = true
+    end
+    local col = p.col
+    local row = p.row
+    local extraY = p.yOffset or 0
+    button:ClearAllPoints()
+    button:SetPoint("TOPLEFT", self.frame.content, "TOPLEFT", job.gridInsetX + col * (job.size + job.spacing), -job.gridInsetY - row * (job.size + job.spacing) - extraY)
+    if job.layoutOnly then
+        if ns.ItemButtonStyle and ns.ItemButtonStyle.ResetState then
+            ns.ItemButtonStyle.ResetState(button)
+        end
+        button:Show()
+        return
+    end
+
+    RefreshOneBagButtonState(self, button, p, job)
 end
 
 local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
@@ -3613,14 +3624,60 @@ local function HasDirtySlot(dirtySlots)
     return false
 end
 
+local function GetEntryCategory(entry)
+    if not ns.Categories or not ns.Categories.MatchItem then
+        return nil
+    end
+    return ns.Categories:MatchItem(entry and entry.item, "bags")
+end
+
+local function GetCategoryKey(category)
+    if not category then
+        return nil
+    end
+    return category.id or category.name or tostring(category)
+end
+
+local function IsSameCategory(a, b)
+    return GetCategoryKey(a) == GetCategoryKey(b)
+end
+
+local function IsSameSlotEntry(a, b)
+    if not a or not b then
+        return false
+    end
+    local itemA = a.item
+    local itemB = b.item
+    if (itemA == nil) ~= (itemB == nil) then
+        return false
+    end
+    if not itemA and not itemB then
+        return true
+    end
+    return tostring(itemA.itemLink or itemA.itemID or "") == tostring(itemB.itemLink or itemB.itemID or "")
+        and tostring(itemA.iconFileID or "") == tostring(itemB.iconFileID or "")
+        and tonumber(itemA.stackCount or 0) == tonumber(itemB.stackCount or 0)
+        and itemA.isLocked == itemB.isLocked
+        and tostring(itemA.quality or "") == tostring(itemB.quality or "")
+        and itemA.isQuestItem == itemB.isQuestItem
+        and itemA.isReadable == itemB.isReadable
+end
+
+local function SlotNeedsSplitRelayout(entry, oldItem, newItem)
+    if not entry or entry.bagID == nil then
+        return false
+    end
+    if not (OneBag.splitByBagRows or IsBagSplitEnabled(entry.bagID)) then
+        return false
+    end
+    return (oldItem ~= nil) ~= (newItem ~= nil)
+end
+
 function OneBag:CanRefreshItemsOnly()
     if not self.frame or not self.frame:IsShown() or not IsViewingCurrentCharacter() then
         return false
     end
     if IsVisualSortEnabled() then
-        return false
-    end
-    if ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") then
         return false
     end
     return self._lastButtonRenderTemplate and self._lastButtonRenderTemplate.positioned and self._lastButtonRenderTemplate.slotIndex
@@ -3635,6 +3692,28 @@ function OneBag:RefreshItemsOnly(dirtySlots)
     local positioned = previous.positioned
     local slotIndex = previous.slotIndex
     local changedIndexes = {}
+    local categoriesEnabled = ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") or false
+    local sortSessionActive = ns.Sorter and ns.Sorter.running == true
+
+    local function updatePositionedEntry(index, bagID, slot, force)
+        local positionedEntry = positioned[index]
+        if not positionedEntry then
+            return true
+        end
+        local oldEntry = positionedEntry.entry
+        local newEntry = BuildCurrentOneBagSlotEntry(bagID, slot)
+        if (not sortSessionActive) and categoriesEnabled and not IsSameCategory(positionedEntry.category, GetEntryCategory(newEntry)) then
+            return false
+        end
+        if (not sortSessionActive) and SlotNeedsSplitRelayout(oldEntry, oldEntry and oldEntry.item, newEntry and newEntry.item) then
+            return false
+        end
+        if force or not IsSameSlotEntry(oldEntry, newEntry) then
+            positionedEntry.entry = newEntry
+            changedIndexes[#changedIndexes + 1] = index
+        end
+        return true
+    end
 
     for rawBagID, slots in pairs(dirtySlots) do
         local bagID = tonumber(rawBagID) or rawBagID
@@ -3652,18 +3731,16 @@ function OneBag:RefreshItemsOnly(dirtySlots)
                 end
                 for slot = 1, slotCount do
                     local index = slotIndex[GetSlotKey(bagID, slot)]
-                    if index and positioned[index] then
-                        positioned[index].entry = BuildCurrentOneBagSlotEntry(bagID, slot)
-                        changedIndexes[#changedIndexes + 1] = index
+                    if index and not updatePositionedEntry(index, bagID, slot, false) then
+                        return false
                     end
                 end
             elseif type(slots) == "table" then
                 for rawSlot in pairs(slots) do
                     local slot = tonumber(rawSlot) or rawSlot
                     local index = slotIndex[GetSlotKey(bagID, slot)]
-                    if index and positioned[index] then
-                        positioned[index].entry = BuildCurrentOneBagSlotEntry(bagID, slot)
-                        changedIndexes[#changedIndexes + 1] = index
+                    if index and not updatePositionedEntry(index, bagID, slot, true) then
+                        return false
                     end
                 end
             end
@@ -3671,7 +3748,7 @@ function OneBag:RefreshItemsOnly(dirtySlots)
     end
 
     if #changedIndexes == 0 then
-        return false
+        return true
     end
 
     table.sort(changedIndexes)
@@ -3711,7 +3788,7 @@ function OneBag:RefreshItemsOnly(dirtySlots)
     local function process(limit)
         local processed = 0
         while job.index <= #job.indexes and processed < limit do
-            RenderOneBagPositionedButton(self, job, job.indexes[job.index])
+            RefreshOneBagPositionedButtonStateOnly(self, job, job.indexes[job.index])
             job.index = job.index + 1
             processed = processed + 1
         end
@@ -3779,6 +3856,7 @@ function OneBag:Refresh(layoutOnly)
     self:UpdateSearchLayout()
 
     local categoryConfig = ns.Categories and ns.Categories:GetConfig("bags") or nil
+    local categoriesEnabled = ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") or false
     local layoutKey = table.concat({
         GetBagSplitLayoutKey(),
         GetCategoryLayoutKey(categoryConfig),
@@ -3812,12 +3890,10 @@ function OneBag:Refresh(layoutOnly)
     local desiredContentWidth = gridWidth + (gridInsetX * 2)
     local contentHeight = gridInsetY + rows * size + (rows - 1) * spacing + gridInsetY
 
-    -- Desired frame size from configured columns.
     local frameWidth = math.max(desiredContentWidth + framePaddingX, tonumber(self.windowWidth) or 0)
     local frameHeight = math.max(200, math.min(tonumber(self.maxHeight) or BAG_DEFAULT_MAX_HEIGHT, contentHeight + frameVerticalChrome))
     self.frame:SetSize(frameWidth, frameHeight)
 
-    -- Recenter against actual available content width (template/min-width can exceed desired width).
     local actualContentWidth = self.frame.ScrollFrame and self.frame.ScrollFrame:GetWidth() or (self.frame.content and self.frame.content:GetWidth()) or desiredContentWidth
     gridInsetX = math.max(spacing, math.floor((actualContentWidth - gridWidth) * 0.5))
 
@@ -3827,7 +3903,6 @@ function OneBag:Refresh(layoutOnly)
     local splitSections = cachedLayout and cachedLayout.splitSections or {}
     local categorySections = cachedLayout and cachedLayout.categorySections or {}
     local categoryByID = {}
-    local categoriesEnabled = ns.Categories and ns.Categories.HasActiveCategories and ns.Categories:HasActiveCategories("bags") or false
     local categoryColumnCount = math.max(1, math.min(tonumber(categoryConfig and categoryConfig.columns) or 1, cols))
     local categoryLayoutMode = (categoryConfig and categoryConfig.layout == "fixed") and "fixed" or "masonry"
     local visualSortEnabled = IsVisualSortEnabled()
@@ -3950,6 +4025,31 @@ function OneBag:Refresh(layoutOnly)
     local sectionPlaceholders = {}
     local sectionDropTargets = {}
     local sectionHeaderHeight = 14
+    local slotButtonIndexes = {}
+    local physicalSlots = {}
+    for _, entry in ipairs(allSlots or {}) do
+        if entry and entry.bagID ~= nil and entry.slot ~= nil then
+            physicalSlots[#physicalSlots + 1] = entry
+        end
+    end
+    table.sort(physicalSlots, function(a, b)
+        local aBag = tonumber(a.bagID) or 0
+        local bBag = tonumber(b.bagID) or 0
+        if aBag == bBag then
+            return (tonumber(a.slot) or 0) < (tonumber(b.slot) or 0)
+        end
+        return aBag < bBag
+    end)
+    for index, entry in ipairs(physicalSlots) do
+        slotButtonIndexes[GetSlotKey(entry.bagID, entry.slot)] = index
+    end
+
+    local function GetStableButtonIndex(entry)
+        if entry and entry.bagID ~= nil and entry.slot ~= nil then
+            return slotButtonIndexes[GetSlotKey(entry.bagID, entry.slot)]
+        end
+        return nil
+    end
 
     local function AddSection(section)
         local entries = section.entries or {}
@@ -3976,6 +4076,7 @@ function OneBag:Refresh(layoutOnly)
                 col = localIndex % cols,
                 row = usedRows + math.floor(localIndex / cols),
                 yOffset = extraYOffset,
+                buttonIndex = GetStableButtonIndex(entry),
             }
         end
         for idx = #entries + 1, visibleSlots do
@@ -4129,6 +4230,7 @@ function OneBag:Refresh(layoutOnly)
                     row = startRow + math.floor(localIndex / sectionCols),
                     yOffset = headerOffset,
                     category = section.category,
+                    buttonIndex = GetStableButtonIndex(entry),
                 }
             end
             for idx = #entries + 1, visibleSlots do
@@ -4171,15 +4273,12 @@ function OneBag:Refresh(layoutOnly)
 
     AddCategoryGrid(categorySections)
 
-    -- Keyring is always split and always placed after non-split, split-bag, and category sections.
     if #keySlots > 0 then
         AddSection({ title = KEYRING or "Keyring", entries = keySlots })
     end
 
     rows = math.max(1, usedRows)
 
-    -- Derive content height from final positioned geometry so split-section gaps
-    -- are always accounted for exactly.
     local maxBottom = 0
     for _, p in ipairs(positioned) do
         local row = p.row or 0

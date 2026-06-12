@@ -798,11 +798,20 @@ local function RefreshVisibleViews()
         return
     end
     Sorter.lastRefresh = now
-    if ns.OneBag and ns.OneBag.frame and ns.OneBag.frame:IsShown() then
-        ns.OneBag:Refresh()
+    local dirtySlots = Sorter.lastMovedDirtySlots
+    Sorter.lastMovedDirtySlots = nil
+    if dirtySlots and ns.LunaBags and ns.LunaBags.RefreshDirtyOpenWindows then
+        ns.LunaBags:RefreshDirtyOpenWindows(dirtySlots)
     end
-    if ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown() then
-        ns.OneBank:Refresh()
+end
+
+local function MarkSorterDirtySlot(dirtySlots, bagID, slot)
+    if bagID == nil or slot == nil then
+        return
+    end
+    dirtySlots[bagID] = dirtySlots[bagID] or {}
+    if dirtySlots[bagID] ~= true then
+        dirtySlots[bagID][slot] = true
     end
 end
 
@@ -834,6 +843,9 @@ function Sorter:MoveItem(fromSpace, toSpace)
     end
     self.lastMoveFrom = fromKey
     self.lastMoveTo = toKey
+    self.lastMovedDirtySlots = self.lastMovedDirtySlots or {}
+    MarkSorterDirtySlot(self.lastMovedDirtySlots, fromSpace.bag, fromSpace.slot)
+    MarkSorterDirtySlot(self.lastMovedDirtySlots, toSpace.bag, toSpace.slot)
     if GetTime then
         self.waitUntil = GetTime() + MOVE_SETTLE_DELAY
     end
@@ -965,6 +977,7 @@ function Sorter:Start()
     self.lastRefresh = 0
     self.lastMoveFrom = nil
     self.lastMoveTo = nil
+    self.lastMovedDirtySlots = nil
     self.waitUntil = nil
     self.itemInfoCache = {}
     if ns and ns.LunaBags and ns.LunaBags.BeginSortSession then ns.LunaBags:BeginSortSession() end
@@ -977,6 +990,7 @@ function Sorter:Stop()
     if self._onStop then self._onStop() elseif ns.OneBag and ns.OneBag.SetSortingState then ns.OneBag:SetSortingState(false) end
     self._onStart = nil
     self._onStop = nil
+    self.lastMovedDirtySlots = nil
     self.waitUntil = nil
     self.itemInfoCache = nil
 end

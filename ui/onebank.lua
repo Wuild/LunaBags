@@ -1644,9 +1644,6 @@ function OneBank:CreateFrame()
     ApplyBankFrameLayering(frame)
     EnsureStackSplitFrameAboveBank()
 
-    -- Do not register as a generic special frame; bank open/close should be
-    -- driven only by Blizzard bank flow (CloseBankFrame/BANKFRAME_* events).
-
     frame:RegisterForDrag()
     frame:SetScript("OnDragStart", nil)
     frame:SetScript("OnDragStop", function(f)

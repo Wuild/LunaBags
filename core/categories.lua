@@ -199,8 +199,6 @@ local function MigrateSharedScopes(profile)
         return
     end
 
-    -- Categories are profile data. Older builds stored them per character, which
-    -- made copied/selected profiles look empty on alts.
     if type(profile.bags) ~= "table" then
         profile.bags = {}
     end
@@ -244,8 +242,6 @@ local function EnsureScopedConfig(scope)
     scope = NormalizeScope(scope)
     MigrateSharedScopes(profile)
 
-    -- Migration: early sessions could resolve character identity as unknown and
-    -- write categories into a shared placeholder bucket.
     if profile._migratedUnknownCharacterKey ~= true then
         profile.perCharacter = profile.perCharacter or {}
         local key = GetCharacterKey()
@@ -269,8 +265,6 @@ local function EnsureScopedConfig(scope)
         profile._migratedUnknownCharacterKey = true
     end
 
-    -- Migration: early category builds stored bag categories directly at
-    -- profile.categories.list before categories were per character and scoped.
     if scope == "bags" and profile._migratedFlatListToPerCharacter ~= true then
         local cfg = profile.bags or {}
         if type(profile.list) == "table" and #profile.list > 0 and not ScopedConfigHasCategories(cfg) then

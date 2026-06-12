@@ -246,8 +246,6 @@ function ExtraStyleWindow:Create()
     f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     f:RegisterEvent("PLAYER_MONEY")
 
-    -- Body intentionally left empty as requested.
-
     f.bagRail = bagRail
     f.itemArea = itemArea
     f.sampleItemButtons = sampleItemButtons

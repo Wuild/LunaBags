@@ -91,8 +91,6 @@ function BagHooks:CloseBags(source)
     if self.toggleLocked and source ~= "UI" then
         return
     end
-    -- Opening bank can trigger CloseAllBags in Blizzard code paths.
-    -- Keep inventory visible in that case.
     local now = GetTime and GetTime() or 0
     local bankOpenLatched = self.bankOpenLatchUntil and now <= self.bankOpenLatchUntil
     if source == "CloseAllBags" and (bankOpenLatched or (BankFrame and BankFrame:IsShown()) or (ns.OneBank and ns.OneBank.frame and ns.OneBank.frame:IsShown())) then
@@ -189,7 +187,6 @@ function BagHooks:EnableHooks()
             BagHooks:ToggleBags("ToggleBag")
             return
         end
-        -- Non-backpack bag toggles map to the same combined view in LunaBags.
         BagHooks:ToggleBags("ToggleBag")
     end
 
