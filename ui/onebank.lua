@@ -2915,6 +2915,27 @@ function OneBank:RefreshItemsOnly(dirtySlots)
     return true
 end
 
+function OneBank:RefreshCooldowns()
+    if not self.frame or not self.frame:IsShown() or IsBankViewMode() then
+        return false
+    end
+
+    local refreshed = false
+    for i = 1, #self.buttons do
+        local button = self.buttons[i]
+        if button and button:IsShown() then
+            if button.readOnly or not button.bagID or not button.slot then
+                ClearItemCooldown(button)
+            else
+                UpdateItemCooldown(button, button.bagID, button.slot)
+                button._lunaBagsRenderSignature = nil
+                refreshed = true
+            end
+        end
+    end
+    return refreshed
+end
+
 function OneBank:Refresh(layoutOnly)
     if not self.frame then
         return

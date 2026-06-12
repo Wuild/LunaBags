@@ -3742,6 +3742,34 @@ function OneBag:RefreshItemsOnly(dirtySlots)
     return true
 end
 
+function OneBag:RefreshCooldowns()
+    if not self.frame or not self.frame:IsShown() or not IsViewingCurrentCharacter() then
+        return false
+    end
+
+    local refreshed = false
+    local function update(button)
+        if not button or not button:IsShown() then
+            return
+        end
+        if button.virtualEmpty or not button.bagID or not button.slot then
+            ClearItemCooldown(button)
+            return
+        end
+        UpdateItemCooldown(button, button.bagID, button.slot)
+        button._lunaBagsRenderSignature = nil
+        refreshed = true
+    end
+
+    for i = 1, #self.buttons do
+        update(self.buttons[i])
+    end
+    for i = 1, #self.keyringButtons do
+        update(self.keyringButtons[i])
+    end
+    return refreshed
+end
+
 function OneBag:Refresh(layoutOnly)
     if not self.frame then
         return

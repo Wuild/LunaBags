@@ -415,6 +415,8 @@ function LunaBags:OnEnable()
 
     self:RegisterEvent("BAG_UPDATE_DELAYED")
     self:RegisterEvent("BAG_UPDATE")
+    self:RegisterEvent("BAG_UPDATE_COOLDOWN")
+    self:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN", "BAG_UPDATE_COOLDOWN")
     self:RegisterEvent("ITEM_LOCK_CHANGED")
     self:RegisterEvent("PLAYER_MONEY")
     self:RegisterEvent("CHAT_MSG_MONEY", "PLAYER_MONEY")

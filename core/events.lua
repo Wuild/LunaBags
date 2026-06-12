@@ -79,6 +79,36 @@ function LunaBags:ITEM_LOCK_CHANGED(_, bagID, slot)
     self:MarkDirtyBagSlot(bagID, slot)
 end
 
+function LunaBags:RefreshOpenWindowCooldowns()
+    if addon.OneBag and addon.OneBag.RefreshCooldowns then
+        addon.OneBag:RefreshCooldowns()
+    end
+    if addon.OneBank and addon.OneBank.RefreshCooldowns then
+        addon.OneBank:RefreshCooldowns()
+    end
+end
+
+function LunaBags:BAG_UPDATE_COOLDOWN()
+    if self._cooldownRefreshQueued then
+        return
+    end
+    self._cooldownRefreshQueued = true
+
+    local function refresh()
+        if not addon or not addon.LunaBags then
+            return
+        end
+        addon.LunaBags._cooldownRefreshQueued = false
+        addon.LunaBags:RefreshOpenWindowCooldowns()
+    end
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, refresh)
+    else
+        refresh()
+    end
+end
+
 function LunaBags:RefreshDirtyOpenWindows(dirtySlots)
     local anyVisible = false
 
