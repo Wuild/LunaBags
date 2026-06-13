@@ -682,6 +682,15 @@ local function RefreshOpenWindows()
     if addon.Categories and addon.Categories.InvalidateMatchCache then
         addon.Categories:InvalidateMatchCache()
     end
+    local categoriesActive = addon.Categories
+        and addon.Categories.HasActiveCategories
+        and (addon.Categories:HasActiveCategories("bags") or addon.Categories:HasActiveCategories("bank"))
+    if not categoriesActive then
+        if addon.Plugins and addon.Plugins.RefreshVisible then
+            addon.Plugins:RefreshVisible(nil)
+        end
+        return
+    end
     if addon.OneBag then
         addon.OneBag._layoutModel = nil
         if addon.OneBag.InvalidateSlotCache then

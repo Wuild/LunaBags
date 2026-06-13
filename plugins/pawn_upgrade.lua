@@ -54,6 +54,11 @@ local function ApplyArrowAnchor(icon, button)
         return
     end
     local anchor, x, y = GetArrowLayout()
+    local signature = table.concat({ anchor, tostring(x), tostring(y) }, "|")
+    if icon._lunaBagsPawnAnchorSignature == signature then
+        return
+    end
+    icon._lunaBagsPawnAnchorSignature = signature
     icon:ClearAllPoints()
     if anchor == "top_left" then
         icon:SetPoint("TOPLEFT", button, "TOPLEFT", x, -y)
@@ -72,15 +77,15 @@ local function SetUpgradeIconShown(button, shown)
         return
     end
     ApplyArrowAnchor(icon, button)
-    icon:SetShown(shown == true)
+    shown = shown == true
+    if icon:IsShown() ~= shown then
+        icon:SetShown(shown)
+    end
 end
 
-local function RefreshOpenWindows()
-    if addon.OneBag and addon.OneBag.frame and addon.OneBag.frame:IsShown() then
-        addon.OneBag:Refresh()
-    end
-    if addon.OneBank and addon.OneBank.frame and addon.OneBank.frame:IsShown() then
-        addon.OneBank:Refresh()
+local function RefreshVisibleButtons()
+    if addon.Plugins and addon.Plugins.RefreshVisible then
+        addon.Plugins:RefreshVisible("pawnUpgrade")
     end
 end
 
@@ -110,6 +115,14 @@ local function QueueRetry(button)
     end
 end
 
+local function QueueHideConfirm(button)
+    if not button then
+        return
+    end
+    button._lunaPawnConfirmingHide = true
+    QueueRetry(button)
+end
+
 local function RegisterWithPawn()
     if pawnRegistered or type(PawnRegisterThirdPartyBag) ~= "function" then
         return
@@ -117,7 +130,7 @@ local function RegisterWithPawn()
     PawnRegisterThirdPartyBag("LunaBags", {
         RefreshAll = function()
             refreshCounter = refreshCounter + 1
-            RefreshOpenWindows()
+            RefreshVisibleButtons()
         end,
     })
     pawnRegistered = true
@@ -155,20 +168,26 @@ function Plugin:Apply(button, entry, context, enabled)
 
     local isUpgrade = PawnShouldItemLinkHaveUpgradeArrow(itemLink, true)
     if isUpgrade == nil then
-        SetUpgradeIconShown(button, false)
         button._lunaPawnLastCheckedRefresh = nil
         button._lunaPawnLastCheckedLink = nil
         QueueRetry(button)
         return
     end
 
+    local icon = button.UpgradeIcon
+    if isUpgrade == false and icon and icon:IsShown() and button._lunaPawnConfirmingHide ~= true then
+        QueueHideConfirm(button)
+        return
+    end
+
+    button._lunaPawnConfirmingHide = nil
     button._lunaPawnLastCheckedRefresh = refreshCounter
     button._lunaPawnLastCheckedLink = itemLink
     SetUpgradeIconShown(button, isUpgrade)
 end
 
 function Plugin:GetRenderSignature()
-    return refreshCounter
+    return "pawnUpgrade"
 end
 
 function Plugin:GetOptions(api)
@@ -186,7 +205,7 @@ function Plugin:GetOptions(api)
                 set = function(_, value)
                     api.setEnabled(value)
                     refreshCounter = refreshCounter + 1
-                    RefreshOpenWindows()
+                    RefreshVisibleButtons()
                 end,
             },
             hint = {
@@ -210,7 +229,7 @@ function Plugin:GetOptions(api)
                 set = function(_, value)
                     api.set("anchor", value)
                     refreshCounter = refreshCounter + 1
-                    RefreshOpenWindows()
+                    RefreshVisibleButtons()
                 end,
             },
             offsetX = {
@@ -226,7 +245,7 @@ function Plugin:GetOptions(api)
                 set = function(_, value)
                     api.set("offsetX", value)
                     refreshCounter = refreshCounter + 1
-                    RefreshOpenWindows()
+                    RefreshVisibleButtons()
                 end,
             },
             offsetY = {
@@ -242,7 +261,7 @@ function Plugin:GetOptions(api)
                 set = function(_, value)
                     api.set("offsetY", value)
                     refreshCounter = refreshCounter + 1
-                    RefreshOpenWindows()
+                    RefreshVisibleButtons()
                 end,
             },
         },

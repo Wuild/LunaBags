@@ -3441,8 +3441,9 @@ local function RenderOneBagPositionedButton(self, job, i)
     local button = job.usingReadonlyButtons and self:AcquireReadonlyButton(buttonIndex) or self:AcquireButton(buttonIndex)
     button:SetSize(job.size, job.size)
     if (not job.layoutOnly) and ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
-        ns.ItemButtonStyle.Apply(button)
-        button._lunaBagsStyleDirty = true
+        if ns.ItemButtonStyle.Apply(button) then
+            button._lunaBagsStyleDirty = true
+        end
     end
     local col = p.col
     local row = p.row

@@ -197,6 +197,26 @@ function ItemButtonStyle.GetConfig()
     }
 end
 
+function ItemButtonStyle.GetSignature(cfg)
+    cfg = cfg or ItemButtonStyle.GetConfig()
+    return table.concat({
+        tostring(cfg.frameR or ""),
+        tostring(cfg.frameG or ""),
+        tostring(cfg.frameB or ""),
+        tostring(cfg.frameA or ""),
+        tostring(cfg.borderSize or ""),
+        tostring(cfg.stackCountTextSize or ""),
+        tostring(cfg.cooldownTextSize or ""),
+        tostring(cfg.itemTextFont or ""),
+        tostring(cfg.itemTextSize or ""),
+        tostring(cfg.itemTextOutline == true),
+        tostring(cfg.itemTextShadow == true),
+        tostring(cfg.stackCountAlign or ""),
+        tostring(cfg.stackCountOffsetX or ""),
+        tostring(cfg.stackCountOffsetY or ""),
+    }, "|")
+end
+
 local function PixelSnap(texture)
     if not texture then
         return
@@ -267,6 +287,43 @@ local function EnsureLineBorder(button)
     end
     parent._LunaBagsOwnerButton = button
     ItemButtonStyle.ApplyBorderSize(button)
+end
+
+local function EnsureInnerGlow(button)
+    if not button then
+        return nil
+    end
+    if button.StyleInnerGlow then
+        return button.StyleInnerGlow
+    end
+
+    local parent = button.StyleBorder or button
+    local glow = parent:CreateTexture(nil, "OVERLAY")
+    glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    glow:SetBlendMode("ADD")
+    glow:SetPoint("TOPLEFT", parent, "TOPLEFT", -7, 7)
+    glow:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 7, -7)
+    glow:Hide()
+    button.StyleInnerGlow = glow
+    return glow
+end
+
+local function SetInnerGlowColor(button, r, g, b, a)
+    local glow = EnsureInnerGlow(button)
+    if not glow then
+        return
+    end
+    local alpha = math.min(0.42, math.max(0.18, (a or 0.95) * 0.32))
+    glow:SetVertexColor(r or 0.34, g or 0.34, b or 0.34, alpha)
+    glow:SetShown(button._lunaBagsInnerGlowVisible == true)
+end
+
+local function SetInnerGlowShown(button, shown)
+    if not button or not button.StyleInnerGlow then
+        return
+    end
+    button._lunaBagsInnerGlowVisible = shown == true
+    button.StyleInnerGlow:SetShown(shown == true)
 end
 
 function ItemButtonStyle.ApplyBorderSize(button)
@@ -401,6 +458,7 @@ function ItemButtonStyle.SetBorderVisualColor(button, r, g, b, a)
             line:SetShown(visible)
         end
     end
+    SetInnerGlowColor(button, r, g, b, a)
 end
 
 function ItemButtonStyle.SetBorderColor(button, r, g, b, a)
@@ -423,6 +481,7 @@ function ItemButtonStyle.ResetState(button)
     button._styleDragging = false
     button:SetAlpha(button._baseAlpha or 1)
     button.StyleBG:SetBackdropColor(cfg.frameR, cfg.frameG, cfg.frameB, cfg.frameA)
+    SetInnerGlowShown(button, false)
     ItemButtonStyle.SetBorderVisualColor(
             button,
             button.StyleBorderBaseR or 0.34,
@@ -437,10 +496,20 @@ end
 
 function ItemButtonStyle.Apply(button)
     if not button then
-        return
+        return false
     end
 
     local cfg = ItemButtonStyle.GetConfig()
+    local signature = ItemButtonStyle.GetSignature(cfg)
+    local needsApply = button._lunaBagsStyleSignature ~= signature
+        or not button.StyleBG
+        or not button.StyleBorder
+        or not button.StyleStateHooks
+        or not button.IconMask
+
+    if not needsApply then
+        return false
+    end
 
     if not button.StyleBG then
         button.StyleBG = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -531,6 +600,7 @@ function ItemButtonStyle.Apply(button)
                     Brighten(self.StyleBorderBaseB or 0.34, 0.10),
                     self.StyleBorderBaseA or 0.98
             )
+            SetInnerGlowShown(self, true)
             if self.StyleGlow then self.StyleGlow:Hide() end
             ItemButtonStyle.UpdateLockedState(self)
         end
@@ -548,6 +618,7 @@ function ItemButtonStyle.Apply(button)
                     Brighten(self.StyleBorderBaseB or 0.34, 0.20),
                     1
             )
+            SetInnerGlowShown(self, true)
             if self.StyleGlow then self.StyleGlow:Hide() end
             ItemButtonStyle.UpdateLockedState(self)
         end
@@ -580,12 +651,10 @@ function ItemButtonStyle.Apply(button)
 
         if button.RegisterEvent then
             button:RegisterEvent("ITEM_LOCK_CHANGED")
-            button:RegisterEvent("BAG_UPDATE")
-            button:RegisterEvent("BAG_UPDATE_DELAYED")
-            button:RegisterEvent("MAIL_SEND_INFO_UPDATE")
-            button:RegisterEvent("MAIL_CLOSED")
-            button:HookScript("OnEvent", function(self)
-                self._lunaBagsStyleDirty = true
+            button:HookScript("OnEvent", function(self, event, bagID, slot)
+                if event == "ITEM_LOCK_CHANGED" and (tonumber(bagID) ~= tonumber(self.bagID) or tonumber(slot) ~= tonumber(self.slot)) then
+                    return
+                end
                 ItemButtonStyle.UpdateLockedState(self)
             end)
         end
@@ -593,6 +662,8 @@ function ItemButtonStyle.Apply(button)
         button.StyleStateHooks = true
         SetIdle(button)
     end
+    button._lunaBagsStyleSignature = signature
+    return true
 end
 
 function ItemButtonStyle.UpdateBorderForItem(button, item, qualityEnabled)

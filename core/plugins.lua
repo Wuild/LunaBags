@@ -65,3 +65,50 @@ function Plugins:Apply(button, entry, context)
         end
     end
 end
+
+function Plugins:ApplyOne(pluginID, button, entry, context)
+    local plugin = pluginID and self.registry and self.registry[pluginID]
+    if not plugin then
+        return
+    end
+    if plugin.Apply then
+        plugin:Apply(button, entry, context, self:IsEnabled(pluginID))
+    elseif plugin.apply then
+        plugin.apply(button, entry, context, self:IsEnabled(pluginID))
+    end
+end
+
+local function ButtonEntry(button)
+    if not button then
+        return nil
+    end
+    return {
+        bagID = button.bagID,
+        slot = button.slot,
+        item = button.itemData,
+        virtualEmpty = button.virtualEmpty == true,
+    }
+end
+
+local function RefreshButtons(owner, pluginID, context, predicate)
+    if not owner or not owner.frame or not owner.frame:IsShown() then
+        return
+    end
+    for _, button in ipairs(owner.buttons or {}) do
+        if button and button:IsShown() and button.virtualEmpty ~= true then
+            local entry = ButtonEntry(button)
+            if not predicate or predicate(button, entry, context) ~= false then
+                if pluginID then
+                    Plugins:ApplyOne(pluginID, button, entry, context)
+                else
+                    Plugins:Apply(button, entry, context)
+                end
+            end
+        end
+    end
+end
+
+function Plugins:RefreshVisible(pluginID, predicate)
+    RefreshButtons(ns.OneBag, pluginID, "oneBag", predicate)
+    RefreshButtons(ns.OneBank, pluginID, "oneBank", predicate)
+end
