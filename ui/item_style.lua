@@ -625,15 +625,6 @@ function ItemButtonStyle.Apply(button)
 
         button:HookScript("OnEnter", SetHover)
         button:HookScript("OnLeave", SetIdle)
-        button:HookScript("OnMouseDown", SetDrag)
-        button:HookScript("OnMouseUp", function(self)
-            self._styleDragging = false
-            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
-        end)
-        button:HookScript("OnClick", function(self)
-            self._styleDragging = false
-            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
-        end)
         button:HookScript("OnDragStart", SetDrag)
         button:HookScript("OnDragStop", function(self)
             self._styleDragging = false

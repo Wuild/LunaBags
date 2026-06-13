@@ -1480,14 +1480,6 @@ local function ApplyButtonStyle(button)
         end
         button:HookScript("OnEnter", SetHover)
         button:HookScript("OnLeave", SetIdle)
-        button:HookScript("OnMouseDown", SetDrag)
-        button:HookScript("OnMouseUp", function(self)
-            if self:IsMouseOver() then
-                SetHover(self)
-            else
-                SetIdle(self)
-            end
-        end)
         button:HookScript("OnDragStart", SetDrag)
         button:HookScript("OnReceiveDrag", function(self)
             if self:IsMouseOver() then
