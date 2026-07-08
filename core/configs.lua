@@ -103,6 +103,9 @@ addon.configsDefaults = {
             oneBank = true,
             oneGuildBank = true,
         },
+        tooltips = {
+            showAcrossCharacters = true,
+        },
         sorting = {
             priorityItemIDs = "6948",
             reverseSlotOrder = false,

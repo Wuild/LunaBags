@@ -4,8 +4,20 @@ local LunaBags = ns.LunaBags
 local Tooltip = LunaBags and LunaBags:CreateModule("tooltip") or {}
 ns.Tooltip = Tooltip
 
+local function ShouldShowCharacterItemCountTooltip()
+    local profile = LunaBags and LunaBags.db and LunaBags.db.profile
+    local tooltips = profile and profile.tooltips
+    if type(tooltips) ~= "table" then
+        return true
+    end
+    return tooltips.showAcrossCharacters ~= false
+end
+
 local function AddCharacterItemCountTooltip(tt, itemID)
     if not ns.BagData or not itemID then
+        return
+    end
+    if not ShouldShowCharacterItemCountTooltip() then
         return
     end
 

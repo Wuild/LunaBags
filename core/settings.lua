@@ -224,6 +224,20 @@ local function SetModuleSetting(key, value)
     end
 end
 
+local function GetTooltipSetting(key, fallback)
+    LunaBags.db.profile.tooltips = LunaBags.db.profile.tooltips or {}
+    local value = LunaBags.db.profile.tooltips[key]
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
+local function SetTooltipSetting(key, value)
+    LunaBags.db.profile.tooltips = LunaBags.db.profile.tooltips or {}
+    LunaBags.db.profile.tooltips[key] = value
+end
+
 local function ReloadUIIfAvailable()
     if ReloadUI then
         ReloadUI()
@@ -998,6 +1012,19 @@ local function BuildGeneralOptions()
                 RefreshOneBag()
                 RefreshOneBank()
             end,
+        },
+        tooltipsHeader = {
+            type = "header",
+            name = "Tooltips",
+            order = 2.5,
+        },
+        showAcrossCharactersTooltip = {
+            type = "toggle",
+            name = "Show Across Character Item Counts",
+            desc = "Add bag and bank item counts for all cached characters to item tooltips.",
+            order = 2.6,
+            get = function() return GetTooltipSetting("showAcrossCharacters", true) end,
+            set = function(_, value) SetTooltipSetting("showAcrossCharacters", value ~= false) end,
         },
         modulesHeader = {
             type = "header",
