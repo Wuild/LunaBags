@@ -6,6 +6,29 @@ ns.LunaBags = LunaBags
 
 local defaults = ns.configsDefaults
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local VERSION_PREFIX = "LunaBagsVer"
+
+local function NormalizeVersionParts(version)
+    local parts = {}
+    for chunk in tostring(version or ""):gmatch("%d+") do
+        parts[#parts + 1] = tonumber(chunk) or 0
+    end
+    return parts
+end
+
+local function CompareVersions(a, b)
+    local pa = NormalizeVersionParts(a)
+    local pb = NormalizeVersionParts(b)
+    local length = math.max(#pa, #pb)
+    for i = 1, length do
+        local va = pa[i] or 0
+        local vb = pb[i] or 0
+        if va ~= vb then
+            return va < vb and -1 or 1
+        end
+    end
+    return 0
+end
 
 local function Base64Encode(data)
     if type(data) ~= "string" or data == "" then
@@ -154,6 +177,115 @@ function LunaBags:MigrateDefaultSortRules()
         sorting.rules = ns:CopySortRules(defaults.profile.sorting.rules)
     end
     sorting._defaultRulesVersion = 5
+end
+
+function LunaBags:GetVersionString()
+    if self._versionString then
+        return self._versionString
+    end
+    local version = GetAddOnMetadata and GetAddOnMetadata(ADDON_NAME, "Version") or nil
+    if type(version) ~= "string" or version == "" then
+        version = "unknown"
+    end
+    self._versionString = version
+    return version
+end
+
+function LunaBags:GetVersionPrefix()
+    return VERSION_PREFIX
+end
+
+function LunaBags:RegisterVersionPrefix()
+    if self._versionPrefixRegistered then
+        return true
+    end
+    local prefix = self:GetVersionPrefix()
+    if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+        local ok = pcall(C_ChatInfo.RegisterAddonMessagePrefix, prefix)
+        self._versionPrefixRegistered = ok == true
+        return self._versionPrefixRegistered
+    end
+    if RegisterAddonMessagePrefix then
+        local ok = pcall(RegisterAddonMessagePrefix, prefix)
+        self._versionPrefixRegistered = ok == true
+        return self._versionPrefixRegistered
+    end
+    return false
+end
+
+function LunaBags:SendVersionAddonMessage(message, channel, target)
+    local prefix = self:GetVersionPrefix()
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+        return C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
+    end
+    if SendAddonMessage then
+        return SendAddonMessage(prefix, message, channel, target)
+    end
+    return false
+end
+
+function LunaBags:StartVersionCheck(channel)
+    if not self:RegisterVersionPrefix() then
+        self:Print("Version checks are unavailable on this client.")
+        return
+    end
+
+    local localVersion = self:GetVersionString()
+    local current = GetTime and GetTime() or time()
+    local checkID = ("%d:%d"):format(math.floor(current), math.random(100000, 999999))
+    self._versionCheck = {
+        id = checkID,
+        localVersion = localVersion,
+        highestVersion = localVersion,
+        highestSender = nil,
+        responses = 0,
+    }
+
+    local function finalize()
+        local state = self._versionCheck
+        if not state or state.id ~= checkID then
+            return
+        end
+        if state.highestSender and CompareVersions(state.highestVersion, state.localVersion) > 0 then
+            self:Print(("Update available: %s (%s) reported by %s"):format(state.highestVersion, state.localVersion, state.highestSender))
+        else
+            self:Print(("No newer version found. Local version: %s"):format(state.localVersion))
+        end
+        self._versionCheck = nil
+    end
+
+    local channels = {}
+    if type(channel) == "string" and channel ~= "" then
+        channels[#channels + 1] = channel:upper()
+    else
+        if IsInGuild and IsInGuild() then
+            channels[#channels + 1] = "GUILD"
+        end
+        if IsInRaid and IsInRaid() then
+            channels[#channels + 1] = "RAID"
+        elseif IsInGroup and IsInGroup() then
+            channels[#channels + 1] = "PARTY"
+        end
+        if IsInInstance and IsInInstance() then
+            channels[#channels + 1] = "INSTANCE_CHAT"
+        end
+    end
+
+    if #channels == 0 then
+        self:Print(("Local version: %s"):format(localVersion))
+        return
+    end
+
+    for _, commChannel in ipairs(channels) do
+        self:SendVersionAddonMessage(("REQ|%s|%s"):format(checkID, localVersion), commChannel)
+    end
+
+    self:Print(("Checking version against %s... local %s"):format(table.concat(channels, ", "), localVersion))
+    if C_Timer and C_Timer.After then
+        C_Timer.After(2.5, finalize)
+    else
+        finalize()
+    end
 end
 
 function LunaBags:IsWindowModuleEnabled(key)
@@ -441,8 +573,10 @@ function LunaBags:OnEnable()
         self:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
     end
     self:RegisterEvent("PLAYER_LOGOUT")
+    self:RegisterEvent("CHAT_MSG_ADDON")
 
     self:HookBlizzardFrames()
+    self:RegisterVersionPrefix()
 
     self:UpdateCurrentCharacterCacheDeferred(false, false)
 

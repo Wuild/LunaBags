@@ -32,6 +32,16 @@ function LunaBags:HandleSlashCommand(input)
         return
     end
 
+    if cmd == "version" or cmd == "ver" or cmd == "checkversion" then
+        if self.StartVersionCheck then
+            self:StartVersionCheck(rest)
+        else
+            local version = (self.GetVersionString and self:GetVersionString()) or "unknown"
+            self:Print(("Local version: %s"):format(tostring(version)))
+        end
+        return
+    end
+
     if cmd == "dumpchars" then
         if not addon.BagData then
             self:Print("BagData module missing.")
@@ -202,5 +212,5 @@ function LunaBags:HandleSlashCommand(input)
         return
     end
 
-    self:Print("Commands: /lunabags [open|close|toggle|view <Name-Realm|current>|scan|dbcheck|debug|enable|disable|dump|dumpchars|window]")
+    self:Print("Commands: /lunabags [open|close|toggle|view <Name-Realm|current>|scan|dbcheck|debug|enable|disable|dump|dumpchars|version|window]")
 end

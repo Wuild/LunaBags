@@ -2,6 +2,42 @@ local ADDON_NAME, addon = ...
 
 local LunaBags = addon.LunaBags
 
+local function NormalizeVersionParts(version)
+    local parts = {}
+    for chunk in tostring(version or ""):gmatch("%d+") do
+        parts[#parts + 1] = tonumber(chunk) or 0
+    end
+    return parts
+end
+
+local function CompareVersions(a, b)
+    local pa = NormalizeVersionParts(a)
+    local pb = NormalizeVersionParts(b)
+    local length = math.max(#pa, #pb)
+    for i = 1, length do
+        local va = pa[i] or 0
+        local vb = pb[i] or 0
+        if va ~= vb then
+            return va < vb and -1 or 1
+        end
+    end
+    return 0
+end
+
+local function GetVersionPrefix()
+    if LunaBags and LunaBags.GetVersionPrefix then
+        return LunaBags:GetVersionPrefix()
+    end
+    return "LunaBagsVer"
+end
+
+local function GetVersionString()
+    if LunaBags and LunaBags.GetVersionString then
+        return LunaBags:GetVersionString()
+    end
+    return "unknown"
+end
+
 function LunaBags:UpdateCurrentCharacterCache(includeBank)
     if not addon.BagData then
         return
@@ -296,4 +332,37 @@ end
 
 function LunaBags:PLAYER_LOGOUT()
     self:UpdateCurrentCharacterCache(true)
+end
+
+function LunaBags:CHAT_MSG_ADDON(prefix, message, channel, sender)
+    if prefix ~= GetVersionPrefix() then
+        return
+    end
+    if type(message) ~= "string" or message == "" then
+        return
+    end
+
+    sender = sender and Ambiguate and Ambiguate(sender, "short") or sender
+    local kind, checkID, payload = strsplit("|", message, 3)
+    if kind == "REQ" then
+        if sender and sender ~= (UnitName and UnitName("player")) then
+            self:SendVersionAddonMessage(("RES|%s|%s"):format(checkID or "", GetVersionString()), "WHISPER", sender)
+        end
+        return
+    end
+
+    if kind ~= "RES" then
+        return
+    end
+
+    local state = self._versionCheck
+    if not state or state.id ~= checkID then
+        return
+    end
+
+    if CompareVersions(payload, state.highestVersion or state.localVersion) > 0 then
+        state.highestVersion = payload
+        state.highestSender = sender
+    end
+    state.responses = (state.responses or 0) + 1
 end
