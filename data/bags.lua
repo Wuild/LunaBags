@@ -189,6 +189,8 @@ function BagData:ScanBags(includeBank)
             character.bank = prevBank or {}
         end
     end
+
+    self._tooltipCountRevision = (self._tooltipCountRevision or 0) + 1
 end
 
 function BagData:ScanBagsDeferred(includeBank, onDone)
@@ -272,6 +274,7 @@ function BagData:ScanBagsDeferred(includeBank, onDone)
         end
 
         current.character.lastUpdate = time()
+        BagData._tooltipCountRevision = (BagData._tooltipCountRevision or 0) + 1
         BagData._scanJob = nil
         frame:SetScript("OnUpdate", nil)
         if type(current.onDone) == "function" then

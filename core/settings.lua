@@ -124,12 +124,53 @@ local function GetUISetting(key, fallback)
     return value
 end
 
-local function SetUISetting(key, value)
+local function GetSkinPreset(skinName)
+    local presets = ns and ns.skinPresets
+    if type(presets) ~= "table" then
+        return nil
+    end
+    return presets[skinName]
+end
+
+local function ApplySkinPreset(skinName)
+    local preset = GetSkinPreset(skinName) or GetSkinPreset("Luna")
+    if type(preset) ~= "table" then
+        return
+    end
+
     LunaBags.db.profile.ui = LunaBags.db.profile.ui or {}
-    LunaBags.db.profile.ui[key] = value
+    local ui = LunaBags.db.profile.ui
+    for key, value in pairs(preset.ui or {}) do
+        if type(value) == "table" then
+            ui[key] = {}
+            for k, v in pairs(value) do
+                ui[key][k] = v
+            end
+        else
+            ui[key] = value
+        end
+    end
+    ui.skin = preset.label or skinName or "Luna"
     RefreshOneBag(true)
     RefreshOneBank()
     RefreshOneGuildBank()
+    if RefreshProfileOptions then
+        RefreshProfileOptions()
+    end
+end
+
+local function SetUISetting(key, value)
+    LunaBags.db.profile.ui = LunaBags.db.profile.ui or {}
+    LunaBags.db.profile.ui[key] = value
+    if key ~= "skin" then
+        LunaBags.db.profile.ui.skin = "Custom"
+    end
+    RefreshOneBag(true)
+    RefreshOneBank()
+    RefreshOneGuildBank()
+    if RefreshProfileOptions then
+        RefreshProfileOptions()
+    end
 end
 
 local function GetUIColorSetting(key, r, g, b)
@@ -147,16 +188,22 @@ local function SetUIColorSetting(key, r, g, b)
 end
 
 local function ResetUIColorAndOpacitySettings()
-    LunaBags.db.profile.ui = LunaBags.db.profile.ui or {}
-    LunaBags.db.profile.ui.windowColor = { r = 0.12, g = 0.12, b = 0.12 }
-    LunaBags.db.profile.ui.windowOpacity = 0.72
-    LunaBags.db.profile.ui.headerColor = { r = 0.07, g = 0.07, b = 0.07 }
-    LunaBags.db.profile.ui.headerOpacity = 0.78
-    LunaBags.db.profile.ui.itemFrameColor = { r = 0.13, g = 0.13, b = 0.13 }
-    LunaBags.db.profile.ui.itemFrameOpacity = 0.92
-    RefreshOneBag(true)
-    RefreshOneBank()
-    RefreshOneGuildBank()
+    ApplySkinPreset("Luna")
+end
+
+local function GetSkinValues()
+    local values = {
+        Custom = "Custom",
+    }
+    local presets = ns and ns.skinPresets or {}
+    local order = { "Luna", "Sol", "Eclipse" }
+    for _, key in ipairs(order) do
+        local preset = presets[key]
+        if type(preset) == "table" then
+            values[key] = preset.label or key
+        end
+    end
+    return values
 end
 
 local function GetPluginSetting(key, fallback)
@@ -1105,29 +1152,50 @@ local function BuildAppearanceOptions()
     return {
         overview = {
             type = "description",
-            name = "Shared color, opacity, border, and text settings used by the bag, bank, and guild bank windows.",
+            name = "Shared skin, color, opacity, border, and text settings used by the bag, bank, and guild bank windows.",
             order = -1,
             fontSize = "medium",
         },
+        skin = {
+            type = "select",
+            name = "Skin",
+            order = 0,
+            values = GetSkinValues(),
+            get = function() return GetUISetting("skin", "Luna") end,
+            set = function(_, value)
+                if value == "Custom" then
+                    LunaBags.db.profile.ui = LunaBags.db.profile.ui or {}
+                    LunaBags.db.profile.ui.skin = "Custom"
+                    RefreshOneBag(true)
+                    RefreshOneBank()
+                    RefreshOneGuildBank()
+                    if RefreshProfileOptions then
+                        RefreshProfileOptions()
+                    end
+                    return
+                end
+                ApplySkinPreset(value)
+            end,
+        },
         resetColors = {
             type = "execute",
-            name = "Reset Colors",
-            desc = "Restore default shared colors and opacity. Border size and text sizes are not changed.",
-            order = 0,
+            name = "Reset to Luna",
+            desc = "Restore the Luna skin defaults.",
+            order = 1,
             confirm = true,
             func = ResetUIColorAndOpacitySettings,
         },
         windowColor = {
             type = "color",
             name = "Window Color",
-            order = 1,
+            order = 2,
             get = function() return GetUIColorSetting("windowColor", 0.12, 0.12, 0.12) end,
             set = function(_, r, g, b) SetUIColorSetting("windowColor", r, g, b) end,
         },
         windowOpacity = {
             type = "range",
             name = "Window Opacity",
-            order = 2,
+            order = 3,
             min = 0.1,
             max = 1,
             step = 0.01,
@@ -1138,14 +1206,14 @@ local function BuildAppearanceOptions()
         headerColor = {
             type = "color",
             name = "Header Color",
-            order = 3,
+            order = 4,
             get = function() return GetUIColorSetting("headerColor", 0.07, 0.07, 0.07) end,
             set = function(_, r, g, b) SetUIColorSetting("headerColor", r, g, b) end,
         },
         headerOpacity = {
             type = "range",
             name = "Header Opacity",
-            order = 4,
+            order = 5,
             min = 0.1,
             max = 1,
             step = 0.01,
@@ -1156,14 +1224,14 @@ local function BuildAppearanceOptions()
         itemFrameColor = {
             type = "color",
             name = "Item Frame Color",
-            order = 5,
+            order = 6,
             get = function() return GetUIColorSetting("itemFrameColor", 0.13, 0.13, 0.13) end,
             set = function(_, r, g, b) SetUIColorSetting("itemFrameColor", r, g, b) end,
         },
         itemFrameOpacity = {
             type = "range",
             name = "Item Frame Opacity",
-            order = 6,
+            order = 7,
             min = 0,
             max = 1,
             step = 0.01,
@@ -1174,7 +1242,7 @@ local function BuildAppearanceOptions()
         itemBorderSize = {
             type = "range",
             name = "Item Border Size",
-            order = 7,
+            order = 8,
             min = 0,
             max = 4,
             step = 1,
@@ -1184,10 +1252,9 @@ local function BuildAppearanceOptions()
         itemTextFont = {
             type = "select",
             name = "Item Text Font",
-            order = 8,
+            order = 9,
             values = {
                 expressway = "Expressway",
-                arial_bold = "Arial Bold",
                 friz = "Friz Quadrata",
             },
             get = function() return GetUISetting("itemTextFont", "expressway") end,
@@ -1196,7 +1263,7 @@ local function BuildAppearanceOptions()
         itemTextSize = {
             type = "range",
             name = "Item Text Size",
-            order = 9,
+            order = 10,
             min = 8,
             max = 24,
             step = 1,
@@ -1206,21 +1273,21 @@ local function BuildAppearanceOptions()
         itemTextOutline = {
             type = "toggle",
             name = "Item Text Outline",
-            order = 10,
+            order = 11,
             get = function() return GetUISetting("itemTextOutline", true) end,
             set = function(_, value) SetUISetting("itemTextOutline", value) end,
         },
         itemTextShadow = {
             type = "toggle",
             name = "Item Text Shadow",
-            order = 11,
+            order = 12,
             get = function() return GetUISetting("itemTextShadow", true) end,
             set = function(_, value) SetUISetting("itemTextShadow", value) end,
         },
         stackCountAlign = {
             type = "select",
             name = "Stack Count Align",
-            order = 12,
+            order = 13,
             values = {
                 left = "Left",
                 right = "Right",
@@ -1231,7 +1298,7 @@ local function BuildAppearanceOptions()
         stackCountOffsetX = {
             type = "range",
             name = "Stack Count X Offset",
-            order = 13,
+            order = 14,
             min = 0,
             max = 20,
             step = 1,
@@ -1241,7 +1308,7 @@ local function BuildAppearanceOptions()
         stackCountOffsetY = {
             type = "range",
             name = "Stack Count Y Offset",
-            order = 14,
+            order = 15,
             min = 0,
             max = 20,
             step = 1,

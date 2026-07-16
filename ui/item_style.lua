@@ -6,9 +6,16 @@ ns.ItemButtonStyle = ItemButtonStyle
 
 local ITEM_TEXT_FONTS = {
     expressway = "Interface\\AddOns\\LunaBags\\Art\\Expressway.ttf",
-    arial_bold = "Fonts\\ARIALNB.TTF",
+    arial_bold = "Fonts\\FRIZQT__.TTF",
     friz = "Fonts\\FRIZQT__.TTF",
 }
+
+local function ResolveTextFont(fontKey)
+    if type(fontKey) ~= "string" or fontKey == "" then
+        return ITEM_TEXT_FONTS.expressway
+    end
+    return ITEM_TEXT_FONTS[fontKey] or ITEM_TEXT_FONTS.expressway
+end
 
 local function ResolveQualityBorderColor(quality)
     if not quality or quality <= 1 then
@@ -348,7 +355,7 @@ function ItemButtonStyle.ApplyTextStyle(button)
     end
     local cfg = ItemButtonStyle.GetConfig()
     local sharedSize = cfg.itemTextSize or 10
-    local font = cfg.itemTextFont or ITEM_TEXT_FONTS.expressway
+    local font = ResolveTextFont(cfg.itemTextFont)
     local styleFlags = cfg.itemTextOutline and "OUTLINE" or ""
     local function ApplySmoothSmallFont(region, size)
         if not region then
@@ -414,7 +421,7 @@ function ItemButtonStyle.ApplyItemTextFont(fontString, size)
     end
     local cfg = ItemButtonStyle.GetConfig()
     local sharedSize = cfg.itemTextSize or 10
-    local font = cfg.itemTextFont or ITEM_TEXT_FONTS.expressway
+    local font = ResolveTextFont(cfg.itemTextFont)
     local styleFlags = cfg.itemTextOutline and "OUTLINE" or ""
     if fontString.SetFont then
         fontString:SetFont(font, size or sharedSize, styleFlags)

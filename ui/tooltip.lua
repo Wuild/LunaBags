@@ -13,52 +13,101 @@ local function ShouldShowCharacterItemCountTooltip()
     return tooltips.showAcrossCharacters ~= false
 end
 
+local function GetCharacterItemCountCache()
+    if not ns.BagData then
+        return nil
+    end
+
+    local revision = tonumber(ns.BagData._tooltipCountRevision) or 0
+    if ns.BagData._itemCountCacheRevision == revision and type(ns.BagData._itemCountCache) == "table" then
+        return ns.BagData._itemCountCache
+    end
+
+    local cache = {}
+    for key, character in ns.BagData:IterCharacters() do
+        local entry = cache[key]
+        if not entry then
+            entry = {
+                name = (character and character.name) or key,
+                realm = character and character.realm or nil,
+                bags = 0,
+                bank = 0,
+            }
+            cache[key] = entry
+        end
+
+        local function Accumulate(container, isBank)
+            if type(container) ~= "table" then
+                return
+            end
+            for _, bagData in pairs(container) do
+                local slots = bagData and bagData.slots
+                if type(slots) == "table" then
+                    for _, s in pairs(slots) do
+                        local itemID = tonumber(s and s.itemID)
+                        if itemID then
+                            local count = tonumber(s.stackCount) or 1
+                            local bucket = cache[itemID]
+                            if not bucket then
+                                bucket = {}
+                                cache[itemID] = bucket
+                            end
+                            local itemEntry = bucket[key]
+                            if not itemEntry then
+                                itemEntry = {
+                                    name = entry.name,
+                                    realm = entry.realm,
+                                    bags = 0,
+                                    bank = 0,
+                                }
+                                bucket[key] = itemEntry
+                            end
+                            if isBank then
+                                itemEntry.bank = itemEntry.bank + count
+                            else
+                                itemEntry.bags = itemEntry.bags + count
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        Accumulate(character and character.bags, false)
+        Accumulate(character and character.bank, true)
+    end
+
+    ns.BagData._itemCountCache = cache
+    ns.BagData._itemCountCacheRevision = revision
+    return cache
+end
+
 local function AddCharacterItemCountTooltip(tt, itemID)
-    if not ns.BagData or not itemID then
+    if not itemID then
         return
     end
     if not ShouldShowCharacterItemCountTooltip() then
         return
     end
 
-    local hasAny = false
-    for _, _ in ns.BagData:IterCharacters() do
-        hasAny = true
-        break
-    end
-    if not hasAny then
+    local cache = GetCharacterItemCountCache()
+    local counts = cache and cache[itemID]
+    if type(counts) ~= "table" then
         return
     end
 
     tt:AddLine(" ")
     tt:AddLine("Item Across Characters", 0.9, 0.9, 0.9)
-    for _, c in ns.BagData:IterCharacters() do
-        local bagsCount, bankCount = 0, 0
-        if c and c.bags then
-            for _, bagData in pairs(c.bags) do
-                if bagData and bagData.slots then
-                    for _, s in pairs(bagData.slots) do
-                        if s and tonumber(s.itemID) == itemID then
-                            bagsCount = bagsCount + (s.stackCount or 1)
-                        end
-                    end
-                end
-            end
-        end
-        if c and c.bank then
-            for _, bagData in pairs(c.bank) do
-                if bagData and bagData.slots then
-                    for _, s in pairs(bagData.slots) do
-                        if s and tonumber(s.itemID) == itemID then
-                            bankCount = bankCount + (s.stackCount or 1)
-                        end
-                    end
-                end
-            end
-        end
+    for key, countsForCharacter in pairs(counts) do
+        local bagsCount = tonumber(countsForCharacter and countsForCharacter.bags) or 0
+        local bankCount = tonumber(countsForCharacter and countsForCharacter.bank) or 0
         local total = bagsCount + bankCount
         if total > 0 then
-            local name = (c and c.name) or "Unknown"
+            local name = (countsForCharacter and countsForCharacter.name) or key or "Unknown"
+            local realm = countsForCharacter and countsForCharacter.realm
+            if realm and realm ~= "" then
+                name = name .. " - " .. realm
+            end
             tt:AddDoubleLine(name, string.format("%d (bags %d / bank %d)", total, bagsCount, bankCount), 0.8, 0.8, 0.8, 1, 1, 1)
         end
     end

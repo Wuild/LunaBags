@@ -20,6 +20,13 @@ OneBank.draggedCategoryItem = nil
 
 ns.OneBank = OneBank
 
+local ONEBANK_BUTTON_POOL = 192
+local ONEBANK_BAG_BUTTON_POOL = 7
+
+function OneBank:OnEnable()
+    self:CreateFrame()
+end
+
 function OneBank:OnDisable()
     self:Hide()
     if ns.LunaBags and ns.LunaBags.RestoreDefaultBankFrame then
@@ -1333,6 +1340,18 @@ local function ShowLiveBankItemTooltip(button)
     return false
 end
 
+local function GetBankTooltipKey(button)
+    if not button then
+        return nil
+    end
+    return table.concat({
+        tostring(button.readOnly == true),
+        tostring(button.bagID or button.viewBagID or ""),
+        tostring(button.slot or button.viewSlot or ""),
+        tostring(button.itemData and button.itemData.itemLink or button.itemData and button.itemData.itemID or ""),
+    }, ":")
+end
+
 local function ApplyButtonStyle(button)
     if ns.ItemButtonStyle and ns.ItemButtonStyle.Apply then
         ns.ItemButtonStyle.Apply(button)
@@ -2047,7 +2066,21 @@ function OneBank:CreateFrame()
 
     self.frame = frame
     self:ApplySettings()
+    self:PrimeButtonPool()
     self:UpdateSearchLayout()
+end
+
+function OneBank:PrimeButtonPool()
+    if not self.frame then
+        return
+    end
+
+    for i = 1, ONEBANK_BUTTON_POOL do
+        self:AcquireButton(i)
+    end
+    for i = 1, ONEBANK_BAG_BUTTON_POOL do
+        self:AcquireBagButton(i)
+    end
 end
 
 function OneBank:AcquireBagButton(index)
@@ -2385,8 +2418,13 @@ function OneBank:AcquireButton(index)
         if not GameTooltip:IsOwned(self) then
             return
         end
+        local tooltipKey = GetBankTooltipKey(self)
+        if tooltipKey and self._lunaBagsTooltipShownKey == tooltipKey and GameTooltip:GetItem() then
+            return
+        end
         GameTooltip:ClearLines()
         if ShowLiveBankItemTooltip(self) then
+            self._lunaBagsTooltipShownKey = tooltipKey
             GameTooltip:Show()
         end
     end
@@ -2673,6 +2711,10 @@ local function RenderOneBankPositionedButton(self, job, i)
             b.icon:SetDesaturated(self.sortingActive == true)
         end
         b._lunaBagsRenderSignature = renderSignature
+    end
+    b._lunaBagsTooltipKey = GetBankTooltipKey(b)
+    if b._lunaBagsTooltipShownKey ~= b._lunaBagsTooltipKey then
+        b._lunaBagsTooltipShownKey = nil
     end
     local pluginRenderSignature = renderSignature .. ":" .. tostring(job.pluginSignature or "")
     local pluginDirty = visualDirty or b._lunaBagsStyleDirty == true or b._lunaBagsPluginSignature ~= pluginRenderSignature
@@ -3860,6 +3902,8 @@ function LunaBagsOneBank_ItemButtonOnEnter(button)
     if (button.bagID and button.slot) or (button.viewBagID and button.viewSlot) then
         if button.UpdateTooltip then
             button:UpdateTooltip()
+        elseif ShowLiveBankItemTooltip(button) then
+            GameTooltip:Show()
         end
         if ns.OneBag and not ns.OneBag.hoveredItemID then
             local _, link = GameTooltip:GetItem()

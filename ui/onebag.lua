@@ -28,10 +28,16 @@ OneBag.draggedCategoryItem = nil
 
 ns.OneBag = OneBag
 
+local ONEBAG_MAIN_BUTTON_POOL = 96
+local ONEBAG_READONLY_BUTTON_POOL = 96
+local ONEBAG_KEYRING_BUTTON_POOL = 40
+local ONEBAG_BAG_BUTTON_POOL = 6
+
 function OneBag:OnEnable()
     if ns.BagHooks then
         ns.BagHooks:EnableHooks()
     end
+    self:CreateFrame()
 end
 
 function OneBag:OnDisable()
@@ -245,15 +251,27 @@ local function StyleScrollButton(button, label)
         return
     end
     button:SetSize(12, 12)
-    if button.SetNormalTexture then button:SetNormalTexture("Interface\\Buttons\\WHITE8X8") end
-    if button.SetPushedTexture then button:SetPushedTexture("Interface\\Buttons\\WHITE8X8") end
-    if button.SetHighlightTexture then button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8") end
+    if button.SetNormalTexture then
+        button:SetNormalTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    if button.SetPushedTexture then
+        button:SetPushedTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    if button.SetHighlightTexture then
+        button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+    end
     local normal = button.GetNormalTexture and button:GetNormalTexture()
-    if normal then normal:SetVertexColor(0.10, 0.10, 0.10, 0.95) end
+    if normal then
+        normal:SetVertexColor(0.10, 0.10, 0.10, 0.95)
+    end
     local pushed = button.GetPushedTexture and button:GetPushedTexture()
-    if pushed then pushed:SetVertexColor(0.16, 0.16, 0.16, 1) end
+    if pushed then
+        pushed:SetVertexColor(0.16, 0.16, 0.16, 1)
+    end
     local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
-    if highlight then highlight:SetVertexColor(0.28, 0.28, 0.28, 0.55) end
+    if highlight then
+        highlight:SetVertexColor(0.28, 0.28, 0.28, 0.55)
+    end
     if not button.LunaBagsLabel then
         button.LunaBagsLabel = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         button.LunaBagsLabel:SetPoint("CENTER", button, "CENTER", 0, 0)
@@ -352,9 +370,15 @@ end
 
 local function Clamp01(value, fallback)
     value = tonumber(value)
-    if value == nil then return fallback end
-    if value < 0 then return 0 end
-    if value > 1 then return 1 end
+    if value == nil then
+        return fallback
+    end
+    if value < 0 then
+        return 0
+    end
+    if value > 1 then
+        return 1
+    end
     return value
 end
 
@@ -363,8 +387,8 @@ local function GetColorValue(color, r, g, b)
         return r, g, b
     end
     return tonumber(color.r or color[1]) or r,
-        tonumber(color.g or color[2]) or g,
-        tonumber(color.b or color[3]) or b
+    tonumber(color.g or color[2]) or g,
+    tonumber(color.b or color[3]) or b
 end
 
 local function GetAppearanceConfig(cfg)
@@ -424,7 +448,7 @@ end
 
 local function HasKeyringSupport()
     return KEYRING_CONTAINER ~= nil
-        and ((C_Container and type(C_Container.GetContainerNumSlots) == "function")
+            and ((C_Container and type(C_Container.GetContainerNumSlots) == "function")
             or type(GetContainerNumSlots) == "function")
 end
 
@@ -704,7 +728,7 @@ local function AssignCursorItemToCategory(owner, category)
 
     local item = BuildCursorCategoryItem(itemID)
     local matchedByRules = ns.Categories.ItemMatchesNonItemIDRules
-        and ns.Categories:ItemMatchesNonItemIDRules(category, item)
+            and ns.Categories:ItemMatchesNonItemIDRules(category, item)
     local added = matchedByRules and false or ns.Categories:AddItemIDRule(category, itemID)
     local unblacklisted = ns.Categories.RemoveBlacklistItemID and ns.Categories:RemoveBlacklistItemID(category, itemID)
     if ClearCursor then
@@ -1040,55 +1064,61 @@ local function ApplyTestButtonStyle(button)
             return math.min(1, (v or 0) + amount)
         end
         local function SetIdle(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(0.13, 0.13, 0.13, 0.92)
             self.StyleBorder:SetBackdropBorderColor(
-                self.StyleBorderBaseR or 0.34,
-                self.StyleBorderBaseG or 0.34,
-                self.StyleBorderBaseB or 0.34,
-                self.StyleBorderBaseA or 0.95
+                    self.StyleBorderBaseR or 0.34,
+                    self.StyleBorderBaseG or 0.34,
+                    self.StyleBorderBaseB or 0.34,
+                    self.StyleBorderBaseA or 0.95
             )
             if self.StyleGlow then
                 self.StyleGlow:Hide()
             end
         end
         local function SetHover(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(self._baseAlpha or 1)
             self.StyleBG:SetBackdropColor(0.17, 0.17, 0.17, 0.95)
             self.StyleBorder:SetBackdropBorderColor(
-                Brighten(self.StyleBorderBaseR or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.10),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.10),
-                self.StyleBorderBaseA or 0.98
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.10),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.10),
+                    self.StyleBorderBaseA or 0.98
             )
             if self.StyleGlow then
                 self.StyleGlow:SetBackdropBorderColor(
-                    Brighten(self.StyleBorderBaseR or 0.34, 0.18),
-                    Brighten(self.StyleBorderBaseG or 0.34, 0.18),
-                    Brighten(self.StyleBorderBaseB or 0.34, 0.18),
-                    0.9
+                        Brighten(self.StyleBorderBaseR or 0.34, 0.18),
+                        Brighten(self.StyleBorderBaseG or 0.34, 0.18),
+                        Brighten(self.StyleBorderBaseB or 0.34, 0.18),
+                        0.9
                 )
                 self.StyleGlow:Show()
             end
         end
         local function SetDrag(self)
-            if not self.StyleBG or not self.StyleBorder then return end
+            if not self.StyleBG or not self.StyleBorder then
+                return
+            end
             self:SetAlpha(math.max(0.1, (self._baseAlpha or 1) * 0.72))
             self.StyleBG:SetBackdropColor(0.20, 0.20, 0.20, 0.98)
             self.StyleBorder:SetBackdropBorderColor(
-                Brighten(self.StyleBorderBaseR or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseG or 0.34, 0.20),
-                Brighten(self.StyleBorderBaseB or 0.34, 0.20),
-                1
+                    Brighten(self.StyleBorderBaseR or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseG or 0.34, 0.20),
+                    Brighten(self.StyleBorderBaseB or 0.34, 0.20),
+                    1
             )
             if self.StyleGlow then
                 self.StyleGlow:SetBackdropBorderColor(
-                    Brighten(self.StyleBorderBaseR or 0.34, 0.22),
-                    Brighten(self.StyleBorderBaseG or 0.34, 0.22),
-                    Brighten(self.StyleBorderBaseB or 0.34, 0.22),
-                    0.95
+                        Brighten(self.StyleBorderBaseR or 0.34, 0.22),
+                        Brighten(self.StyleBorderBaseG or 0.34, 0.22),
+                        Brighten(self.StyleBorderBaseB or 0.34, 0.22),
+                        0.95
                 )
                 self.StyleGlow:Show()
             end
@@ -1098,7 +1128,11 @@ local function ApplyTestButtonStyle(button)
         button:HookScript("OnLeave", SetIdle)
         button:HookScript("OnDragStart", SetDrag)
         button:HookScript("OnReceiveDrag", function(self)
-            if self:IsMouseOver() then SetHover(self) else SetIdle(self) end
+            if self:IsMouseOver() then
+                SetHover(self)
+            else
+                SetIdle(self)
+            end
         end)
         button:HookScript("OnHide", SetIdle)
         button.StyleStateHooks = true
@@ -1112,13 +1146,25 @@ local function StripBagButtonDefaultArt(button)
     end
 
     local normal = button.GetNormalTexture and button:GetNormalTexture()
-    if normal then normal:SetTexture(nil); normal:Hide() end
+    if normal then
+        normal:SetTexture(nil);
+        normal:Hide()
+    end
     local pushed = button.GetPushedTexture and button:GetPushedTexture()
-    if pushed then pushed:SetTexture(nil); pushed:Hide() end
+    if pushed then
+        pushed:SetTexture(nil);
+        pushed:Hide()
+    end
     local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
-    if highlight then highlight:SetTexture(nil); highlight:Hide() end
+    if highlight then
+        highlight:SetTexture(nil);
+        highlight:Hide()
+    end
     local checked = button.GetCheckedTexture and button:GetCheckedTexture()
-    if checked then checked:SetTexture(nil); checked:Hide() end
+    if checked then
+        checked:SetTexture(nil);
+        checked:Hide()
+    end
 
     for _, region in ipairs({ button:GetRegions() }) do
         if region and region.GetObjectType and region:GetObjectType() == "Texture" and region ~= button.icon then
@@ -1521,10 +1567,10 @@ local function UpdateButtonStyleBorderForItem(button, itemInfo)
 
     local addon = ns and ns.LunaBags
     local qualityEnabled = not addon
-        or not addon.db
-        or not addon.db.profile
-        or not addon.db.profile.plugins
-        or addon.db.profile.plugins.qualityBorder ~= false
+            or not addon.db
+            or not addon.db.profile
+            or not addon.db.profile.plugins
+            or addon.db.profile.plugins.qualityBorder ~= false
 
     if ns.ItemButtonStyle and ns.ItemButtonStyle.UpdateBorderForItem then
         ns.ItemButtonStyle.UpdateBorderForItem(button, itemInfo, qualityEnabled)
@@ -1770,10 +1816,10 @@ function OneBag:SetBagSlotPreview(bagID)
                 button:SetAlpha(button._baseAlpha or 1)
                 if button.StyleBorder then
                     button.StyleBorder:SetBackdropBorderColor(
-                        button.StyleBorderBaseR or 0.34,
-                        button.StyleBorderBaseG or 0.34,
-                        button.StyleBorderBaseB or 0.34,
-                        button.StyleBorderBaseA or 0.95
+                            button.StyleBorderBaseR or 0.34,
+                            button.StyleBorderBaseG or 0.34,
+                            button.StyleBorderBaseB or 0.34,
+                            button.StyleBorderBaseA or 0.95
                     )
                 end
             elseif button.bagID == bagID then
@@ -1785,10 +1831,10 @@ function OneBag:SetBagSlotPreview(bagID)
                 button:SetAlpha(math.max(0.55, (button._baseAlpha or 1) * 0.65))
                 if button.StyleBorder then
                     button.StyleBorder:SetBackdropBorderColor(
-                        button.StyleBorderBaseR or 0.34,
-                        button.StyleBorderBaseG or 0.34,
-                        button.StyleBorderBaseB or 0.34,
-                        math.min(button.StyleBorderBaseA or 0.95, 0.55)
+                            button.StyleBorderBaseR or 0.34,
+                            button.StyleBorderBaseG or 0.34,
+                            button.StyleBorderBaseB or 0.34,
+                            math.min(button.StyleBorderBaseA or 0.95, 0.55)
                     )
                 end
             end
@@ -1860,17 +1906,39 @@ function OneBag:CreateFrame()
         end
     end)
 
-    if frame.TitleText then frame.TitleText:Hide() end
-    if frame.TitleBg then frame.TitleBg:Hide() end
-    if frame.TopLeftCorner then frame.TopLeftCorner:Hide() end
-    if frame.TopRightCorner then frame.TopRightCorner:Hide() end
-    if frame.TopBorder then frame.TopBorder:Hide() end
-    if frame.LeftBorder then frame.LeftBorder:Hide() end
-    if frame.RightBorder then frame.RightBorder:Hide() end
-    if frame.BottomBorder then frame.BottomBorder:Hide() end
-    if frame.BottomLeftCorner then frame.BottomLeftCorner:Hide() end
-    if frame.BottomRightCorner then frame.BottomRightCorner:Hide() end
-    if frame.Bg then frame.Bg:Hide() end
+    if frame.TitleText then
+        frame.TitleText:Hide()
+    end
+    if frame.TitleBg then
+        frame.TitleBg:Hide()
+    end
+    if frame.TopLeftCorner then
+        frame.TopLeftCorner:Hide()
+    end
+    if frame.TopRightCorner then
+        frame.TopRightCorner:Hide()
+    end
+    if frame.TopBorder then
+        frame.TopBorder:Hide()
+    end
+    if frame.LeftBorder then
+        frame.LeftBorder:Hide()
+    end
+    if frame.RightBorder then
+        frame.RightBorder:Hide()
+    end
+    if frame.BottomBorder then
+        frame.BottomBorder:Hide()
+    end
+    if frame.BottomLeftCorner then
+        frame.BottomLeftCorner:Hide()
+    end
+    if frame.BottomRightCorner then
+        frame.BottomRightCorner:Hide()
+    end
+    if frame.Bg then
+        frame.Bg:Hide()
+    end
 
     if not frame.WindowBg then
         frame.WindowBg = frame:CreateTexture(nil, "BACKGROUND")
@@ -1955,7 +2023,9 @@ function OneBag:CreateFrame()
         frame.Header:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
         frame.Header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
         frame.Header:SetHeight(28)
-        if frame.Header.Title then frame.Header.Title:Hide() end
+        if frame.Header.Title then
+            frame.Header.Title:Hide()
+        end
     end
 
     if frame.Header and frame.Header.SearchBox then
@@ -2030,7 +2100,9 @@ function OneBag:CreateFrame()
             local currentKey = GetCurrentCharacterKey()
             items[#items + 1] = {
                 text = "Current Character",
-                checked = function() return OneBag.viewCharacterKey == nil or NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(currentKey) end,
+                checked = function()
+                    return OneBag.viewCharacterKey == nil or NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(currentKey)
+                end,
                 func = function()
                     if OneBag.SetViewCharacterKey then
                         OneBag:SetViewCharacterKey(nil)
@@ -2050,7 +2122,9 @@ function OneBag:CreateFrame()
                     local label = (selectedChar and selectedChar.name and selectedChar.realm) and (selectedChar.name .. " - " .. selectedChar.realm) or selectedKey
                     items[#items + 1] = {
                         text = label,
-                        checked = function() return NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(selectedKey) end,
+                        checked = function()
+                            return NormalizeCharacterKey(OneBag.viewCharacterKey) == NormalizeCharacterKey(selectedKey)
+                        end,
                         func = function()
                             OneBag:SetViewCharacterKey(selectedKey)
                             OneBag:ApplySettings()
@@ -2065,7 +2139,9 @@ function OneBag:CreateFrame()
                 EasyMenu(items, LunaBagsCharacterMenu, "cursor", 0, 0, "MENU")
             else
                 UIDropDownMenu_Initialize(LunaBagsCharacterMenu, function(_, level)
-                    if level ~= 1 then return end
+                    if level ~= 1 then
+                        return
+                    end
                     for _, entry in ipairs(items) do
                         local info = UIDropDownMenu_CreateInfo()
                         info.text = entry.text
@@ -2175,7 +2251,9 @@ function OneBag:CreateFrame()
         end
         if frame.MoneyBar.GetStatusBarTexture then
             local tex = frame.MoneyBar:GetStatusBarTexture()
-            if tex then tex:SetAlpha(0) end
+            if tex then
+                tex:SetAlpha(0)
+            end
         end
         if frame.MoneyBar.Label then
             frame.MoneyBar.Label:SetFontObject("GameFontNormal")
@@ -2247,8 +2325,12 @@ function OneBag:CreateFrame()
         self:UpdateSearchLayout()
     end
 
-    if frame.BodyChrome then frame.BodyChrome:Hide() end
-    if frame.title then frame.title:Hide() end
+    if frame.BodyChrome then
+        frame.BodyChrome:Hide()
+    end
+    if frame.title then
+        frame.title:Hide()
+    end
 
     if not frame.moneyText and frame.MoneyBar and frame.MoneyBar.Text then
         frame.moneyText = frame.MoneyBar.Text
@@ -2283,6 +2365,26 @@ function OneBag:CreateFrame()
 
     self.frame = frame
     self:ApplySettings()
+    self:PrimeButtonPool()
+end
+
+function OneBag:PrimeButtonPool()
+    if not self.frame then
+        return
+    end
+
+    for i = 1, ONEBAG_MAIN_BUTTON_POOL do
+        self:AcquireButton(i)
+    end
+    for i = 1, ONEBAG_READONLY_BUTTON_POOL do
+        self:AcquireReadonlyButton(i)
+    end
+    for i = 1, ONEBAG_KEYRING_BUTTON_POOL do
+        self:AcquireKeyringButton(i)
+    end
+    for i = 1, ONEBAG_BAG_BUTTON_POOL do
+        self:AcquireBagButton(i)
+    end
 end
 
 function OneBag:SetSortingState(active)
@@ -2393,10 +2495,10 @@ function OneBag:AcquireBagButton(index)
             local g = button.StyleBorderBaseG or 0.34
             local b = button.StyleBorderBaseB or 0.34
             button.StyleBorder:SetBackdropBorderColor(
-                math.min(1, r + 0.12),
-                math.min(1, g + 0.12),
-                math.min(1, b + 0.12),
-                1
+                    math.min(1, r + 0.12),
+                    math.min(1, g + 0.12),
+                    math.min(1, b + 0.12),
+                    1
             )
         end
         OneBag:SetBagSlotPreview(button.bagID)
@@ -2405,10 +2507,10 @@ function OneBag:AcquireBagButton(index)
         GameTooltip:Hide()
         if btn.StyleBorder then
             btn.StyleBorder:SetBackdropBorderColor(
-                btn.StyleBorderBaseR or 0.34,
-                btn.StyleBorderBaseG or 0.34,
-                btn.StyleBorderBaseB or 0.34,
-                btn.StyleBorderBaseA or 0.95
+                    btn.StyleBorderBaseR or 0.34,
+                    btn.StyleBorderBaseG or 0.34,
+                    btn.StyleBorderBaseB or 0.34,
+                    btn.StyleBorderBaseA or 0.95
             )
         end
         OneBag:SetBagSlotPreview(nil)
@@ -2425,10 +2527,14 @@ function OneBag:AcquireBagButton(index)
             local menu = {
                 {
                     text = "Split This Bag Section",
-                    checked = function() return canSplit and IsBagSplitEnabled(bagID) end,
+                    checked = function()
+                        return canSplit and IsBagSplitEnabled(bagID)
+                    end,
                     disabled = (not canSplit) or OneBag.splitByBagRows,
                     func = function()
-                        if not canSplit then return end
+                        if not canSplit then
+                            return
+                        end
                         SetBagSplitEnabled(bagID, not IsBagSplitEnabled(bagID))
                         OneBag:Refresh()
                     end,
@@ -2440,7 +2546,9 @@ function OneBag:AcquireBagButton(index)
                 EasyMenu(menu, LunaBagsBagRailMenu, "cursor", 0, 0, "MENU")
             else
                 UIDropDownMenu_Initialize(LunaBagsBagRailMenu, function(_, level)
-                    if level ~= 1 then return end
+                    if level ~= 1 then
+                        return
+                    end
                     for _, entry in ipairs(menu) do
                         local info = UIDropDownMenu_CreateInfo()
                         info.text = entry.text
@@ -2575,10 +2683,10 @@ function OneBag:RefreshBagSlots()
                     button.StyleBorderBaseR, button.StyleBorderBaseG, button.StyleBorderBaseB, button.StyleBorderBaseA = 0.34, 0.34, 0.34, 0.95
                 end
                 button.StyleBorder:SetBackdropBorderColor(
-                    button.StyleBorderBaseR,
-                    button.StyleBorderBaseG,
-                    button.StyleBorderBaseB,
-                    button.StyleBorderBaseA
+                        button.StyleBorderBaseR,
+                        button.StyleBorderBaseG,
+                        button.StyleBorderBaseB,
+                        button.StyleBorderBaseA
                 )
             end
             button:Show()
@@ -2827,19 +2935,27 @@ function LunaBagsOneBag_SortButtonClicked(_, mouseButton)
         local menu = {
             {
                 text = "Sort Inventory",
-                func = function() LunaBagsOneBag_SortClicked() end,
+                func = function()
+                    LunaBagsOneBag_SortClicked()
+                end,
                 notCheckable = true,
             },
             {
                 text = "Lock Slots Mode",
-                checked = function() return OneBag.lockSlotsMode end,
-                func = function() ToggleLockSlotsMode() end,
+                checked = function()
+                    return OneBag.lockSlotsMode
+                end,
+                func = function()
+                    ToggleLockSlotsMode()
+                end,
                 isNotRadio = true,
                 keepShownOnClick = true,
             },
             {
                 text = "Clear Locked Slots",
-                func = function() ClearAllLockedSlots() end,
+                func = function()
+                    ClearAllLockedSlots()
+                end,
                 notCheckable = true,
             },
         }
@@ -3019,9 +3135,9 @@ function OneBag:BuildLiveSlots()
     end
     local cacheKey = table.concat(visibleKey, ";") .. "|view=" .. tostring(viewingCurrent and "current" or (self.viewCharacterKey or "cached"))
     if self._slotCache
-        and self._slotCacheDirty ~= true
-        and self._slotCacheKey == cacheKey
-        and (not includeFullDetails or self._slotCacheFullDetails == true)
+            and self._slotCacheDirty ~= true
+            and self._slotCacheKey == cacheKey
+            and (not includeFullDetails or self._slotCacheFullDetails == true)
     then
         return self._slotCache
     end
@@ -3055,8 +3171,7 @@ function OneBag:BuildLiveSlots()
                     itemLink = itemInfo and itemInfo.itemLink or nil
                 end
                 local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
-                local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
-                    GetItemDetails(itemLink, itemID, includeFullDetails)
+                local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID = GetItemDetails(itemLink, itemID, includeFullDetails)
                 slots[#slots + 1] = {
                     bagID = bagID,
                     slot = slot,
@@ -3120,8 +3235,7 @@ function OneBag:BuildKeyringSlots()
         if itemInfo then
             local itemLink = GetItemLinkFromBag(KEYRING_CONTAINER, slot)
             local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or nil
-            local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
-                GetItemDetails(itemLink, itemID, includeFullDetails)
+            local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID = GetItemDetails(itemLink, itemID, includeFullDetails)
             slots[#slots + 1] = {
                 bagID = KEYRING_CONTAINER,
                 slot = slot,
@@ -3159,8 +3273,7 @@ local function BuildCurrentOneBagSlotEntry(bagID, slot)
     local itemLink = itemInfo and GetItemLinkFromBag(bagID, slot) or nil
     local itemID = itemLink and tonumber(itemLink:match("item:(%d+)")) or (itemInfo and itemInfo.itemID) or nil
     local includeFullDetails = OneBag.searchText and OneBag.searchText ~= ""
-    local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID =
-        GetItemDetails(itemLink, itemID, includeFullDetails)
+    local itemName, itemQuality, itemLevel, itemTypeName, subTypeName, equipLoc, sellPrice, classID, subClassID = GetItemDetails(itemLink, itemID, includeFullDetails)
     return {
         bagID = bagID,
         slot = slot,
@@ -3322,7 +3435,9 @@ local function RefreshOneBagButtonState(self, button, p, job)
     end
 
     local alpha = info.item and ((job.searching and not isMatch) and 0.22 or 1) or ((job.searching and not isMatch) and 0.18 or 0.55)
-    if self.lockSlotsMode then alpha = 1 end
+    if self.lockSlotsMode then
+        alpha = 1
+    end
     local renderSignature = GetButtonRenderSignature(info, "oneBag", job.readOnly, alpha, job.pluginSignature)
     local visualDirty = button._lunaBagsRenderSignature ~= renderSignature
 
@@ -3462,8 +3577,12 @@ local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
         local b = self.buttons[i]
         if b and b.LockedCross then
             b.LockedCross:Hide()
-            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+            if b.LockedCross.d1 then
+                b.LockedCross.d1:Hide()
+            end
+            if b.LockedCross.d2 then
+                b.LockedCross.d2:Hide()
+            end
         end
         if b and b.LockOverlay then
             b.LockOverlay:Hide()
@@ -3499,13 +3618,21 @@ local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
         for i = 1, #self.buttons do
             local b = self.buttons[i]
             if b then
-                if b.LockOverlay then b.LockOverlay:Hide() end
+                if b.LockOverlay then
+                    b.LockOverlay:Hide()
+                end
                 if b.LockedCross then
                     b.LockedCross:Hide()
-                    if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-                    if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+                    if b.LockedCross.d1 then
+                        b.LockedCross.d1:Hide()
+                    end
+                    if b.LockedCross.d2 then
+                        b.LockedCross.d2:Hide()
+                    end
                 end
-                if b.DebugSlotText then b.DebugSlotText:Hide() end
+                if b.DebugSlotText then
+                    b.DebugSlotText:Hide()
+                end
                 b._lunaBagsRenderSignature = nil
                 b._lunaBagsPluginSignature = nil
                 b._lunaBagsStyleDirty = nil
@@ -3515,8 +3642,12 @@ local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
     else
         for i = 1, #self.readonlyButtons do
             if self.readonlyButtons[i] then
-                if self.readonlyButtons[i].NewItemGlow then SetNewItemGlowShown(self.readonlyButtons[i], false) end
-                if self.readonlyButtons[i].DebugSlotText then self.readonlyButtons[i].DebugSlotText:Hide() end
+                if self.readonlyButtons[i].NewItemGlow then
+                    SetNewItemGlowShown(self.readonlyButtons[i], false)
+                end
+                if self.readonlyButtons[i].DebugSlotText then
+                    self.readonlyButtons[i].DebugSlotText:Hide()
+                end
                 self.readonlyButtons[i]._lunaBagsRenderSignature = nil
                 self.readonlyButtons[i]._lunaBagsPluginSignature = nil
                 self.readonlyButtons[i]._lunaBagsStyleDirty = nil
@@ -3532,8 +3663,12 @@ local function CleanupOneBagButtons(self, used, usingReadonlyButtons)
         local b = self.keyringButtons[i]
         if b and b.LockedCross then
             b.LockedCross:Hide()
-            if b.LockedCross.d1 then b.LockedCross.d1:Hide() end
-            if b.LockedCross.d2 then b.LockedCross.d2:Hide() end
+            if b.LockedCross.d1 then
+                b.LockedCross.d1:Hide()
+            end
+            if b.LockedCross.d2 then
+                b.LockedCross.d2:Hide()
+            end
         end
         if b and b.LockOverlay then
             b.LockOverlay:Hide()
@@ -3652,12 +3787,12 @@ local function IsSameSlotEntry(a, b)
         return true
     end
     return tostring(itemA.itemLink or itemA.itemID or "") == tostring(itemB.itemLink or itemB.itemID or "")
-        and tostring(itemA.iconFileID or "") == tostring(itemB.iconFileID or "")
-        and tonumber(itemA.stackCount or 0) == tonumber(itemB.stackCount or 0)
-        and itemA.isLocked == itemB.isLocked
-        and tostring(itemA.quality or "") == tostring(itemB.quality or "")
-        and itemA.isQuestItem == itemB.isQuestItem
-        and itemA.isReadable == itemB.isReadable
+            and tostring(itemA.iconFileID or "") == tostring(itemB.iconFileID or "")
+            and tonumber(itemA.stackCount or 0) == tonumber(itemB.stackCount or 0)
+            and itemA.isLocked == itemB.isLocked
+            and tostring(itemA.quality or "") == tostring(itemB.quality or "")
+            and itemA.isQuestItem == itemB.isQuestItem
+            and itemA.isReadable == itemB.isReadable
 end
 
 local function SlotNeedsSplitRelayout(entry, oldItem, newItem)
@@ -4606,8 +4741,8 @@ function OneBag:ApplySettings()
     self.splitByBagRows = cfg.splitByBagRows == true
     self.showBagRail = cfg.showBagRail ~= false
     self.bagRailPosition = (cfg.bagRailPosition == "top" or cfg.bagRailPosition == "left" or cfg.bagRailPosition == "right" or cfg.bagRailPosition == "bottom")
-        and cfg.bagRailPosition
-        or "top"
+            and cfg.bagRailPosition
+            or "top"
     self.visibleBags = CopyVisibleBagsState(cfg.visibleBags)
 
     if self.frame then
