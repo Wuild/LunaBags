@@ -516,6 +516,62 @@ function Categories:RemoveBlacklistItemID(category, itemID)
     return changed
 end
 
+local function NormalizeEquipmentSetItemLink(link)
+    if type(link) ~= "string" or link == "" then
+        return nil
+    end
+    return link:match("|H(item:[^|]+)|h") or link:match("(item:[^|]+)") or nil
+end
+
+local function CollectExtraStatsEquipmentSetItems(cache)
+    local extraStats = _G.ExtraStats
+    if not extraStats or type(extraStats.GetModule) ~= "function" then
+        return false
+    end
+
+    local ok, equipment = pcall(extraStats.GetModule, extraStats, "EquipmentSet", true)
+    local sets = ok and equipment and equipment.db and equipment.db.char and equipment.db.char.sets
+    if type(sets) ~= "table" then
+        return false
+    end
+
+    for _, set in ipairs(sets) do
+        if type(set) == "table" then
+            local handledSlots = {}
+            for slotName, storedItemID in pairs(set.items or {}) do
+                local itemLink = NormalizeEquipmentSetItemLink(set.itemLinks and set.itemLinks[slotName])
+                if itemLink then
+                    cache.itemLinks[itemLink] = true
+                else
+                    local itemID = tonumber(storedItemID)
+                    if itemID then
+                        cache.itemIDs[itemID] = true
+                    end
+                end
+                handledSlots[slotName] = true
+            end
+            for slotName, storedItemLink in pairs(set.itemLinks or {}) do
+                if not handledSlots[slotName] then
+                    local itemLink = NormalizeEquipmentSetItemLink(storedItemLink)
+                    if itemLink then
+                        cache.itemLinks[itemLink] = true
+                    end
+                end
+            end
+        end
+    end
+
+    return true
+end
+
+local function EquipmentSetCacheMatches(cache, itemID, itemLink)
+    local normalizedLink = NormalizeEquipmentSetItemLink(itemLink)
+    if normalizedLink and cache.itemLinks[normalizedLink] then
+        return true
+    end
+    return cache.itemIDs[itemID] == true
+end
+
 local function MatchEquipmentSet(item)
     if not item or not item.itemID then return false end
 
@@ -524,12 +580,18 @@ local function MatchEquipmentSet(item)
 
     local now = GetTime and GetTime() or 0
     if Categories._equipmentSetItemCache and (now == 0 or not Categories._equipmentSetItemCacheAt or (now - Categories._equipmentSetItemCacheAt) < 2) then
-        return Categories._equipmentSetItemCache[itemID] == true
+        return EquipmentSetCacheMatches(Categories._equipmentSetItemCache, itemID, item.itemLink)
     end
 
-    local cache = {}
+    local cache = {
+        itemIDs = {},
+        itemLinks = {},
+    }
 
-    if C_EquipmentSet and C_EquipmentSet.GetEquipmentSetIDs and C_EquipmentSet.GetItemIDs then
+    local collectedExtraStats = CollectExtraStatsEquipmentSetItems(cache)
+    local managerIsExtraStats = C_EquipmentSet and C_EquipmentSet._ExtraStats == true
+    if (not managerIsExtraStats or not collectedExtraStats)
+        and C_EquipmentSet and C_EquipmentSet.GetEquipmentSetIDs and C_EquipmentSet.GetItemIDs then
         local setIDs = C_EquipmentSet.GetEquipmentSetIDs() or {}
         for _, setID in ipairs(setIDs) do
             local itemIDs = C_EquipmentSet.GetItemIDs(setID)
@@ -537,7 +599,7 @@ local function MatchEquipmentSet(item)
                 for _, id in pairs(itemIDs) do
                     id = tonumber(id)
                     if id then
-                        cache[id] = true
+                        cache.itemIDs[id] = true
                     end
                 end
             end
@@ -550,7 +612,7 @@ local function MatchEquipmentSet(item)
                 for _, id in pairs(set) do
                     id = tonumber(id)
                     if id then
-                        cache[id] = true
+                        cache.itemIDs[id] = true
                     end
                 end
             end
@@ -564,7 +626,7 @@ local function MatchEquipmentSet(item)
                 local id = type(outfitterItem) == "table" and outfitterItem.Code or outfitterItem
                 id = tonumber(id)
                 if id then
-                    cache[id] = true
+                    cache.itemIDs[id] = true
                 end
             end
         end
@@ -573,7 +635,7 @@ local function MatchEquipmentSet(item)
     Categories._equipmentSetItemCache = cache
     Categories._equipmentSetItemCacheAt = now
 
-    return cache[itemID] == true
+    return EquipmentSetCacheMatches(cache, itemID, item.itemLink)
 end
 
 function Categories:IsEquipmentSetItem(item)

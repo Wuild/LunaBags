@@ -108,11 +108,11 @@ local function GetItemRackID(value)
     return nil
 end
 
-local function AddItem(target, value)
+local function AddItem(target, value, includeItemID)
     local itemID = ExtractItemID(value)
     local itemLink = NormalizeItemLink(value)
     local itemRackID = GetItemRackID(value)
-    if itemID then
+    if itemID and includeItemID ~= false then
         target.itemIDs[itemID] = true
     end
     if itemLink then
@@ -188,13 +188,11 @@ local function AddCategory(out, seen, payload)
     for itemID in pairs(payload.itemIDs) do
         signatureParts[#signatureParts + 1] = "i" .. tostring(itemID)
     end
-    if #signatureParts == 0 then
-        for itemLink in pairs(payload.itemLinks) do
-            signatureParts[#signatureParts + 1] = "l" .. itemLink
-        end
-        for itemRackID in pairs(payload.itemRackIDs) do
-            signatureParts[#signatureParts + 1] = "r" .. itemRackID
-        end
+    for itemLink in pairs(payload.itemLinks) do
+        signatureParts[#signatureParts + 1] = "l" .. itemLink
+    end
+    for itemRackID in pairs(payload.itemRackIDs) do
+        signatureParts[#signatureParts + 1] = "r" .. itemRackID
     end
     table.sort(signatureParts)
     local signature = tostring(payload.name):lower() .. ":" .. table.concat(signatureParts, ",")
@@ -361,16 +359,27 @@ local function CollectExtraStatsSets(out, seen)
                 isEquipped = ok and equipped == true
             end
             local payload = BuildSetPayload("extrastats", setID, set.name, isEquipped)
+            local handledSlots = {}
             for slotName, itemID in pairs(set.items or {}) do
                 local slotID = SLOT_ID_BY_NAME[slotName]
                 if not IsIgnored(set.ignoredSlots, slotID) then
-                    AddItem(payload, itemID)
+                    local itemLink = set.itemLinks and set.itemLinks[slotName]
+                    if NormalizeItemLink(itemLink) then
+                        -- ExtraStats stores the complete item link so duplicate base
+                        -- items with different gems/enchants remain distinguishable.
+                        AddItem(payload, itemLink, false)
+                    else
+                        -- Keep compatibility with sets saved before exact links were
+                        -- recorded.
+                        AddItem(payload, itemID)
+                    end
                 end
+                handledSlots[slotName] = true
             end
             for slotName, itemLink in pairs(set.itemLinks or {}) do
                 local slotID = SLOT_ID_BY_NAME[slotName]
-                if not IsIgnored(set.ignoredSlots, slotID) then
-                    AddItem(payload, itemLink)
+                if not handledSlots[slotName] and not IsIgnored(set.ignoredSlots, slotID) then
+                    AddItem(payload, itemLink, false)
                 end
             end
             AddCategory(out, seen, payload)
