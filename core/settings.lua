@@ -1315,6 +1315,45 @@ local function BuildAppearanceOptions()
             get = function() return GetUISetting("stackCountOffsetY", 3) end,
             set = function(_, value) SetUISetting("stackCountOffsetY", value) end,
         },
+        footerHeader = {
+            type = "header",
+            name = "Footer",
+            order = 20,
+        },
+        bagDataBrokerObjects = {
+            type = "multiselect",
+            name = "Bags Footer Displays",
+            desc = "Choose the DataBroker feeds shown in the bags footer. Slot Count and right-aligned Gold are selected by default. Right-click the bags footer for per-feed display and alignment options.",
+            order = 21,
+            values = function()
+                return ns.GetDataBrokerObjectValues and ns.GetDataBrokerObjectValues("oneBag") or {}
+            end,
+            get = function(_, name)
+                return ns.IsDataBrokerObjectSelected and ns.IsDataBrokerObjectSelected("oneBag", name) or false
+            end,
+            set = function(_, name, selected)
+                if ns.SetDataBrokerObjectSelected then
+                    ns.SetDataBrokerObjectSelected("oneBag", name, selected)
+                end
+            end,
+        },
+        bankDataBrokerObjects = {
+            type = "multiselect",
+            name = "Bank Footer Displays",
+            desc = "Choose the DataBroker feeds shown in the bank footer. Slot Count and right-aligned Gold are selected by default. Right-click the bank footer for per-feed display and alignment options.",
+            order = 22,
+            values = function()
+                return ns.GetDataBrokerObjectValues and ns.GetDataBrokerObjectValues("oneBank") or {}
+            end,
+            get = function(_, name)
+                return ns.IsDataBrokerObjectSelected and ns.IsDataBrokerObjectSelected("oneBank", name) or false
+            end,
+            set = function(_, name, selected)
+                if ns.SetDataBrokerObjectSelected then
+                    ns.SetDataBrokerObjectSelected("oneBank", name, selected)
+                end
+            end,
+        },
     }
 end
 

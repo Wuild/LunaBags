@@ -35,6 +35,7 @@
     <Script file="ui\tooltip.lua"/>
     <Script file="ui\item_style.lua"/>
     <Script file="ui\window.lua"/>
+    <Script file="ui\databroker.lua"/>
     <Include file="ui\onebag.xml"/>
     <Script file="ui\onebag.lua"/>
     <Include file="ui\onebank.xml"/>

@@ -366,6 +366,65 @@ function LunaBags:EnsureProfileShape(profile)
     end
 end
 
+function LunaBags:ConfigureElvUICompatibility()
+    if not self.db or not self.db.profile or self.db.profile.enabled == false then
+        return false
+    end
+
+    local elvui = _G.ElvUI
+    local engine = type(elvui) == "table" and elvui[1] or nil
+    if type(engine) ~= "table" then
+        return false
+    end
+
+    local modules = self.db.profile.modules
+    if type(modules) == "table" and modules.oneBag == false and modules.oneBank == false then
+        return false
+    end
+
+    local bagsModule
+    if type(engine.GetModule) == "function" then
+        local ok, module = pcall(engine.GetModule, engine, "Bags")
+        if ok then
+            bagsModule = module
+        end
+    end
+
+    local private = engine.private
+    if type(private) == "table" and type(private.bags) == "table" then
+        if private.bags.enable ~= false then
+            private.bags.enable = false
+            self._disabledElvUIBags = true
+            self._elvUIReloadRequired = type(bagsModule) == "table" and bagsModule.Initialized == true
+        end
+        return true
+    end
+
+    -- Some ElvUI versions create their private database immediately before
+    -- initializing modules. Wrap only the Bags initializer so the setting is
+    -- available at the exact point ElvUI reads it.
+    if type(bagsModule) == "table"
+        and bagsModule.Initialized ~= true
+        and type(bagsModule.Initialize) == "function"
+        and bagsModule._lunaBagsCompatibilityHook ~= true
+    then
+        local originalInitialize = bagsModule.Initialize
+        bagsModule._lunaBagsCompatibilityHook = true
+        bagsModule.Initialize = function(module, ...)
+            local currentPrivate = engine.private
+            if type(currentPrivate) == "table" and type(currentPrivate.bags) == "table" then
+                currentPrivate.bags.enable = false
+                LunaBags._disabledElvUIBags = true
+            end
+            return originalInitialize(module, ...)
+        end
+        self._elvUICompatibilityQueued = true
+        return true
+    end
+
+    return false
+end
+
 function LunaBags:EnsureCharacterProfile()
     if not self.db or not self.db.SetProfile then
         return
@@ -533,6 +592,7 @@ function LunaBags:OnInitialize()
     end
     self:EnsureCharacterProfile()
     self:EnsureProfileShape()
+    self:ConfigureElvUICompatibility()
     self:ApplyWindowModuleStates()
     self:MigrateDefaultSortRules()
     self:RegisterChatCommand("lunabags", "HandleSlashCommand")
@@ -580,6 +640,11 @@ function LunaBags:OnEnable()
 
     self:UpdateCurrentCharacterCacheDeferred(false, false)
 
+    if self._elvUIReloadRequired then
+        self:Print("Disabled the ElvUI Bags setting. Reload the UI once to finish switching to LunaBags.")
+    elseif self._disabledElvUIBags or self._elvUICompatibilityQueued then
+        self:Print("Disabled the ElvUI Bags module to prevent bag-hook conflicts.")
+    end
     self:Print("Loaded. Type /lunabags for options.")
 end
 

@@ -6,5 +6,6 @@
 ## Author: Wuild
 ## Version: @project-version@
 ## SavedVariables: LunaBagsDB
+## OptionalDeps: LibDataBroker-1.1, ElvUI
 
 LunaBags.xml

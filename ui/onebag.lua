@@ -2265,12 +2265,14 @@ function OneBag:CreateFrame()
             frame.MoneyBar.Text:SetTextColor(1, 1, 1, 1)
         end
         frame.MoneyBar:EnableMouse(true)
-        frame.MoneyBar:SetScript("OnEnter", function(bar)
-            AddMoneyTooltipBreakdown(bar)
-        end)
+        frame.MoneyBar.lunaBagsGoldTooltip = AddMoneyTooltipBreakdown
+        frame.MoneyBar:SetScript("OnEnter", nil)
         frame.MoneyBar:SetScript("OnLeave", function()
             GameTooltip:Hide()
         end)
+        if ns.AttachDataBrokerDisplay then
+            ns.AttachDataBrokerDisplay(frame.MoneyBar, "oneBag")
+        end
     end
 
     if not frame.BagSlots then
@@ -3889,11 +3891,21 @@ function OneBag:RefreshItemsOnly(dirtySlots)
         currentSlots[#currentSlots + 1] = p.entry
     end
     local occupiedSlots, totalSlots = CountSlotUsage(currentSlots)
-    if self.frame.MoneyBar and self.frame.MoneyBar.Label then
-        self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+    if self.frame.MoneyBar then
+        local slotUsageText = FormatSlotUsageText(occupiedSlots, totalSlots)
+        if ns.SetFooterSlotUsage then
+            ns.SetFooterSlotUsage(self.frame.MoneyBar, slotUsageText)
+        elseif self.frame.MoneyBar.Label then
+            self.frame.MoneyBar.Label:SetText(slotUsageText)
+        end
     end
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
-        self.frame.MoneyBar.Text:SetText(FormatMoneyText(GetMoney and GetMoney() or 0, 14))
+        local goldText = FormatMoneyText(GetMoney and GetMoney() or 0, 14)
+        if ns.SetFooterGold then
+            ns.SetFooterGold(self.frame.MoneyBar, goldText)
+        else
+            self.frame.MoneyBar.Text:SetText(goldText)
+        end
     end
 
     local job = {
@@ -4568,15 +4580,22 @@ function OneBag:Refresh(layoutOnly)
         self.frame.moneyText:SetText(FormatMoneyText(money, 14))
     end
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
-        if self.frame.MoneyBar.Label then
-            self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+        local slotUsageText = FormatSlotUsageText(occupiedSlots, totalSlots)
+        if ns.SetFooterSlotUsage then
+            ns.SetFooterSlotUsage(self.frame.MoneyBar, slotUsageText)
+        elseif self.frame.MoneyBar.Label then
+            self.frame.MoneyBar.Label:SetText(slotUsageText)
         end
+        local footerMoney = money
         if readOnly and OneBag.viewCharacterKey and ns.BagData then
             local viewed = GetViewedCharacterData()
-            local vMoney = tonumber(viewed and viewed.money) or 0
-            self.frame.MoneyBar.Text:SetText(FormatMoneyText(vMoney or 0, 14))
+            footerMoney = tonumber(viewed and viewed.money) or 0
+        end
+        local goldText = FormatMoneyText(footerMoney, 14)
+        if ns.SetFooterGold then
+            ns.SetFooterGold(self.frame.MoneyBar, goldText)
         else
-            self.frame.MoneyBar.Text:SetText(FormatMoneyText(money, 14))
+            self.frame.MoneyBar.Text:SetText(goldText)
         end
     end
     if self.frame.CustomTitle then
@@ -4783,6 +4802,9 @@ function OneBag:ApplySettings()
             else
                 self.frame.CharacterButton.Icon:SetTexCoord(0, 1, 0, 1)
             end
+        end
+        if ns.AttachDataBrokerDisplay and self.frame.MoneyBar then
+            ns.AttachDataBrokerDisplay(self.frame.MoneyBar, "oneBag")
         end
     end
 end

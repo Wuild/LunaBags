@@ -1311,6 +1311,16 @@ local function ShowLiveBankItemTooltip(button)
         return false
     end
 
+    -- Use the exact live container coordinates first. Blizzard's stock bank
+    -- handlers derive them from the button's parent/ID layout, which does not
+    -- necessarily match LunaBags' sorted and categorized frame hierarchy.
+    if GameTooltip.SetBagItem then
+        local ok = GameTooltip:SetBagItem(bagID, slot)
+        if ok or GameTooltip:GetItem() then
+            return true
+        end
+    end
+
     if IsBaseBankContainer(bagID) then
         if BankFrameItemButton_OnEnter then
             BankFrameItemButton_OnEnter(button)
@@ -1323,11 +1333,6 @@ local function ShowLiveBankItemTooltip(button)
         end
     elseif ContainerFrameItemButton_OnEnter then
         ContainerFrameItemButton_OnEnter(button)
-        return true
-    end
-
-    local ok = GameTooltip:SetBagItem(bagID, slot)
-    if ok then
         return true
     end
 
@@ -2048,12 +2053,14 @@ function OneBank:CreateFrame()
             frame.MoneyBar.Text:SetTextColor(1, 1, 1, 1)
         end
         frame.MoneyBar:EnableMouse(true)
-        frame.MoneyBar:SetScript("OnEnter", function(bar)
-            AddBankMoneyTooltipBreakdown(bar)
-        end)
+        frame.MoneyBar.lunaBagsGoldTooltip = AddBankMoneyTooltipBreakdown
+        frame.MoneyBar:SetScript("OnEnter", nil)
         frame.MoneyBar:SetScript("OnLeave", function()
             GameTooltip:Hide()
         end)
+        if ns.AttachDataBrokerDisplay then
+            ns.AttachDataBrokerDisplay(frame.MoneyBar, "oneBank")
+        end
     end
 
     if not frame.BagSlots then
@@ -2419,8 +2426,8 @@ function OneBank:AcquireButton(index)
             return
         end
         local tooltipKey = GetBankTooltipKey(self)
-        if tooltipKey and self._lunaBagsTooltipShownKey == tooltipKey and GameTooltip:GetItem() then
-            return
+        if GameTooltip_HideShoppingTooltips then
+            GameTooltip_HideShoppingTooltips(GameTooltip)
         end
         GameTooltip:ClearLines()
         if ShowLiveBankItemTooltip(self) then
@@ -2885,11 +2892,21 @@ function OneBank:RefreshItemsOnly(dirtySlots)
         currentSlots[#currentSlots + 1] = p.entry
     end
     local occupiedSlots, totalSlots = CountSlotUsage(currentSlots)
-    if self.frame.MoneyBar and self.frame.MoneyBar.Label then
-        self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+    if self.frame.MoneyBar then
+        local slotUsageText = FormatSlotUsageText(occupiedSlots, totalSlots)
+        if ns.SetFooterSlotUsage then
+            ns.SetFooterSlotUsage(self.frame.MoneyBar, slotUsageText)
+        elseif self.frame.MoneyBar.Label then
+            self.frame.MoneyBar.Label:SetText(slotUsageText)
+        end
     end
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
-        self.frame.MoneyBar.Text:SetText(FormatMoneyText(GetMoney and GetMoney() or 0, 14))
+        local goldText = FormatMoneyText(GetMoney and GetMoney() or 0, 14)
+        if ns.SetFooterGold then
+            ns.SetFooterGold(self.frame.MoneyBar, goldText)
+        else
+            self.frame.MoneyBar.Text:SetText(goldText)
+        end
     end
 
     local job = {
@@ -3471,10 +3488,18 @@ end
     self:UpdateScrollFrame(contentHeight, math.max(1, frameHeight - frameVerticalChrome))
 
     if self.frame.MoneyBar and self.frame.MoneyBar.Text then
-        if self.frame.MoneyBar.Label then
-            self.frame.MoneyBar.Label:SetText(FormatSlotUsageText(occupiedSlots, totalSlots))
+        local slotUsageText = FormatSlotUsageText(occupiedSlots, totalSlots)
+        if ns.SetFooterSlotUsage then
+            ns.SetFooterSlotUsage(self.frame.MoneyBar, slotUsageText)
+        elseif self.frame.MoneyBar.Label then
+            self.frame.MoneyBar.Label:SetText(slotUsageText)
         end
-        self.frame.MoneyBar.Text:SetText(FormatMoneyText(GetMoney and GetMoney() or 0, 14))
+        local goldText = FormatMoneyText(GetMoney and GetMoney() or 0, 14)
+        if ns.SetFooterGold then
+            ns.SetFooterGold(self.frame.MoneyBar, goldText)
+        else
+            self.frame.MoneyBar.Text:SetText(goldText)
+        end
     end
 end
 
@@ -3676,6 +3701,9 @@ function OneBank:ApplySettings()
             else
                 self.frame.CharacterButton.Icon:SetTexCoord(0, 1, 0, 1)
             end
+        end
+        if ns.AttachDataBrokerDisplay and self.frame.MoneyBar then
+            ns.AttachDataBrokerDisplay(self.frame.MoneyBar, "oneBank")
         end
     self:UpdateSearchLayout()
 end
@@ -3919,6 +3947,9 @@ function LunaBagsOneBank_ItemButtonOnLeave()
     if ns.OneBag then
         ns.OneBag.hoveredItemID = nil
         ns.OneBag.hoveredButton = nil
+    end
+    if GameTooltip_HideShoppingTooltips then
+        GameTooltip_HideShoppingTooltips(GameTooltip)
     end
     GameTooltip:Hide()
 end

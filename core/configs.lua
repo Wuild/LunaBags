@@ -24,6 +24,8 @@ addon.configsDefaults = {
             cooldownTextSize = 10,
         },
         oneBag = {
+            dataBrokerObjects = { "LunaBags: Slot Count", "LunaBags: Gold" },
+            dataBrokerAlignments = { ["LunaBags: Gold"] = "right" },
             columns = 11,
             windowWidth = 481,
             windowMaxHeight = 650,
@@ -44,6 +46,8 @@ addon.configsDefaults = {
             y = 126,
         },
         oneBank = {
+            dataBrokerObjects = { "LunaBags: Slot Count", "LunaBags: Gold" },
+            dataBrokerAlignments = { ["LunaBags: Gold"] = "right" },
             columns = 14,
             windowWidth = 590,
             windowMaxHeight = 650,
